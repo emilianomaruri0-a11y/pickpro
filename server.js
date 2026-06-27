@@ -1101,7 +1101,7 @@ function runtimeStatusForEvent(event, now = Date.now()) {
 function normalizeRuntimeEvent(event, now = Date.now()) {
   const status = runtimeStatusForEvent(event, now);
   let scoreSource = event.scoreSource || "";
-  if (status === "live" && !event.score) scoreSource = "En vivo por horario";
+  if (status === "live" && !event.score) scoreSource = "En vivo";
   if (status === "final" && !event.score) scoreSource = "Final estimado; esperando marcador oficial";
   return {
     ...event,

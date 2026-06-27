@@ -484,7 +484,7 @@ function renderMatchCard(event) {
   const statusLabel = event.status === "live" ? "EN VIVO" : event.status === "final" ? "FINAL" : "PROXIMO";
   const timeText =
     event.status === "live"
-      ? event.scoreSource || "Marcador en vivo"
+      ? "En vivo"
       : event.status === "final"
         ? event.scoreSource || "Marcador final"
         : formatTime(event.commenceTime);
@@ -1126,7 +1126,7 @@ function renderMatchDetail() {
     <article class="match-detail-card">
       <div class="match-top">
         <span>${escapeHtml(event.league)} - ${escapeHtml(event.status === "live" ? "EN VIVO" : "PROXIMO")}</span>
-        <span>${escapeHtml(event.status === "live" ? event.scoreSource || "Marcador en vivo" : event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime))}</span>
+        <span>${escapeHtml(event.status === "live" ? "En vivo" : event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime))}</span>
       </div>
       <div class="detail-match-grid">
         <div class="team">
