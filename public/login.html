@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Iniciar sesion - PickPro</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script defer src="/assets/auth.js"></script>
+  </head>
+  <body class="auth-body">
+    <main class="auth-shell">
+      <section class="auth-card">
+        <img class="auth-logo" src="/assets/pickpro-logo-clean.png" alt="PickPro" />
+        <div class="auth-copy">
+          <span class="ai-pill"><span class="live-dot"></span> Acceso privado</span>
+          <h1>Predicciones protegidas para tu cuenta</h1>
+          <p>Registrate primero. Entra con correo, telefono, usuario o Google.</p>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="Acceso">
+          <button class="active" type="button" data-mode="login">Iniciar sesion</button>
+          <button type="button" data-mode="register">Registrarse</button>
+          <button type="button" data-mode="recover">Recuperar</button>
+        </div>
+
+        <form id="authForm" class="auth-form">
+          <div class="register-only split-fields" hidden>
+            <label>
+              <span>Nombres</span>
+              <input id="firstNames" name="firstNames" autocomplete="given-name" placeholder="Tus nombres" />
+            </label>
+            <label>
+              <span>Apellidos</span>
+              <input id="lastNames" name="lastNames" autocomplete="family-name" placeholder="Tus apellidos" />
+            </label>
+          </div>
+
+          <label class="register-only" hidden>
+            <span>Usuario</span>
+            <input id="handle" name="handle" autocomplete="username" placeholder="ej. pickpro_jg" />
+          </label>
+
+          <label class="register-only" hidden>
+            <span>Correo electronico</span>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="correo@dominio.com" />
+          </label>
+
+          <label class="register-only" hidden>
+            <span>Telefono celular</span>
+            <input id="phone" name="phone" autocomplete="tel" placeholder="+521..." />
+          </label>
+
+          <label class="login-only">
+            <span>Correo, telefono o usuario</span>
+            <input id="username" name="username" autocomplete="username" placeholder="correo@dominio.com, +521... o usuario" />
+          </label>
+
+          <label class="recover-only" hidden>
+            <span>Cuenta a recuperar</span>
+            <input id="recoveryAccount" name="account" placeholder="Correo, telefono o usuario" />
+          </label>
+
+          <label class="recover-code-only" hidden>
+            <span>Codigo de verificacion</span>
+            <input id="recoveryCode" name="code" inputmode="numeric" maxlength="6" placeholder="6 digitos" />
+          </label>
+
+          <label id="passwordField">
+            <span id="passwordLabel">Contrasena</span>
+            <div class="password-wrap">
+              <input id="password" name="password" type="password" autocomplete="current-password" minlength="10" placeholder="Minimo 10 caracteres" />
+              <button id="togglePassword" type="button" aria-label="Mostrar contrasena">Ver</button>
+            </div>
+          </label>
+
+          <button class="auth-submit" type="submit">Entrar</button>
+        </form>
+
+        <div class="oauth-grid">
+          <button type="button" data-provider="google">Continuar con Google</button>
+        </div>
+
+        <p class="auth-note">
+          El telefono, correo y usuario no pueden repetirse en otra cuenta. Para recuperacion se usa un codigo de verificacion.
+        </p>
+        <div class="auth-message" id="authMessage" role="status"></div>
+      </section>
+    </main>
+  </body>
+</html>

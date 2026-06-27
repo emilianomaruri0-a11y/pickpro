@@ -1,0 +1,12 @@
+{
+  "name": "edgepulse-predictor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dashboard local para estimar probabilidades de eventos deportivos con busqueda, refresco en vivo y conectores de cuotas.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

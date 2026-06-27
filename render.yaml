@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: pickpro
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: true
+      - key: ODDS_REGIONS
+        value: us
+      - key: ODDS_MARKETS
+        value: h2h
+      - key: SPORT_KEYS
+        value: baseball_mlb,soccer_fifa_world_cup
+      - key: POLL_INTERVAL_MS
+        value: 10800000
+      - key: LIVE_TICK_INTERVAL_MS
+        value: 1000
+      - key: SESSION_TTL_HOURS
+        value: 12
+      - key: THE_ODDS_API_KEY
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false

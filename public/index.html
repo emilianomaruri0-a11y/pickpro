@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PickPro</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script defer src="/assets/app.js"></script>
+  </head>
+  <body>
+    <div class="app-frame">
+      <header class="app-header">
+        <div class="brand">
+          <img class="brand-logo" src="/assets/pickpro-logo-clean.png" alt="PickPro" />
+        </div>
+
+        <div class="header-actions">
+          <button class="profile-entry" id="profileButton" type="button" aria-label="Abrir perfil" title="Abrir perfil">
+            <img src="/assets/profile-monito.png" alt="" />
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-panel">
+          <div class="hero-content">
+            <div class="ai-pill">
+              <span class="live-dot"></span>
+              IA en vivo - <strong id="heroWinRate">87%</strong> efectividad hoy
+            </div>
+            <h1>Predicciones IA en vivo</h1>
+            <p>Predicciones, probabilidades y analisis en tiempo real para partidos y eventos deportivos.</p>
+
+            <form class="search-panel" id="searchForm">
+              <span aria-hidden="true">?</span>
+              <input id="searchInput" type="search" placeholder="Busca partido, equipo o liga..." autocomplete="off" />
+              <button type="submit">Buscar</button>
+            </form>
+
+            <div class="quick-tags" id="quickTags"></div>
+          </div>
+
+          <div class="hero-stats">
+            <div>
+              <strong id="averageConfidence">0%</strong>
+              <span>Win rate</span>
+            </div>
+            <div>
+              <strong id="totalEvents">0</strong>
+              <span>Picks hoy</span>
+            </div>
+            <div>
+              <strong id="userCount">3.2K</strong>
+              <span>Usuarios</span>
+            </div>
+          </div>
+        </section>
+
+        <nav class="sport-tabs" id="sportTabs" aria-label="Filtros por deporte"></nav>
+        <div class="parlay-shortcuts">
+          <button class="parlay-shortcut" id="parlayShortcut" type="button">
+            <span>Parlay del dia - ver seleccion ganadora &rarr;</span>
+          </button>
+          <button class="parlay-shortcut" id="hitsShortcut" type="button">
+            <span>Acertados de hoy</span>
+          </button>
+          <button class="parlay-shortcut" id="featuredShortcut" type="button">
+            <span>Picks destacados</span>
+          </button>
+          <button class="parlay-shortcut" id="sourcesShortcut" type="button">
+            <span>Fuentes de cuotas</span>
+          </button>
+        </div>
+
+        <section class="content-grid">
+          <div class="main-column">
+            <div class="section-title">
+              <h2><span aria-hidden="true">~</span> Partidos en vivo</h2>
+              <button class="text-button" type="button" data-action="show-all">Ver todos <span aria-hidden="true">-&gt;</span></button>
+            </div>
+            <div class="match-stack" id="liveMatches"></div>
+
+            <div class="section-title">
+              <h2><span aria-hidden="true">~</span> Proximos partidos</h2>
+            </div>
+            <div class="match-stack" id="upcomingMatches"></div>
+
+            <article class="predictions-card day-predictions">
+              <div class="predictions-header">
+                <div class="predictions-icon">
+                  <span aria-hidden="true">P</span>
+                </div>
+                <div>
+                  <h2>Predicciones del dia <span>IA</span></h2>
+                  <p>Senales generadas por IA</p>
+                </div>
+              </div>
+              <div class="predictions-list" id="dailyPredictionList"></div>
+            </article>
+
+            <article class="predictions-card conservative-card" id="parlayDailyCard">
+              <div class="predictions-header">
+                <div class="predictions-icon">
+                  <span aria-hidden="true">P</span>
+                </div>
+                <div>
+                  <h2>Parlay del dia</h2>
+                  <p>Parlays generados por IA para Copa Mundial y MLB, sin garantia de resultado</p>
+                </div>
+              </div>
+              <div class="predictions-list" id="comboList"></div>
+            </article>
+
+            <section class="home-deep-links" hidden>
+              <div class="section-title platform-title">
+                <h2><span aria-hidden="true">$</span> Fuentes de cuotas</h2>
+              </div>
+              <p class="section-copy">Selecciona una casa de apuestas de Mexico para ver sus momios de referencia en las tarjetas.</p>
+              <div class="platform-grid" id="platformGrid"></div>
+
+              <div class="section-title">
+                <h2><span aria-hidden="true">*</span> Picks destacados</h2>
+                <button class="text-button" type="button" data-action="show-all">Ver todos <span aria-hidden="true">^</span></button>
+              </div>
+              <div class="featured-grid" id="featuredPicks"></div>
+            </section>
+
+            <section class="account-panels" aria-label="Configuracion y cuenta">
+              <article class="utility-card">
+                <h2>Configuracion de apuestas</h2>
+                <label>
+                  <span>Formato de momios</span>
+                  <select id="oddsFormat">
+                    <option value="decimal">Decimal (2.00)</option>
+                    <option value="american">Americano (+100)</option>
+                  </select>
+                </label>
+                <button class="utility-button" id="saveSettings" type="button">Guardar configuracion</button>
+              </article>
+
+              <article class="utility-card">
+                <h2>Consejos de apuestas</h2>
+                <ul class="tips-list">
+                  <li>Si no te sientes bien, con buen animo o estas estresado, evita jugar con tu dinero.</li>
+                  <li>No apuestes dinero que necesitas para renta, comida, estudios o pagos importantes.</li>
+                  <li>Define un limite diario antes de jugar y respetalo aunque pierdas.</li>
+                  <li>Las predicciones son probabilidades, no resultados garantizados.</li>
+                </ul>
+              </article>
+
+              <article class="utility-card profile-card">
+                <h2>Mis datos</h2>
+                <div id="profileDetails" class="profile-details"></div>
+                <form id="profileForm" class="profile-form">
+                  <label>
+                    <span>Cambiar nombre de usuario</span>
+                    <input id="profileHandleInput" name="handle" autocomplete="username" placeholder="tu_usuario" />
+                  </label>
+                  <button class="utility-button" type="submit">Guardar nombre de usuario</button>
+                  <p class="form-message" id="profileMessage"></p>
+                </form>
+                <button class="utility-button ghost-button" id="logoutButton" type="button">Cerrar sesion</button>
+              </article>
+
+              <article class="utility-card privacy-card">
+                <h2>Politicas de privacidad</h2>
+                <p>PickPro guarda solo los datos necesarios para iniciar sesion, proteger la cuenta y personalizar la experiencia: nombre, usuario, correo o telefono, formato de momios y fuente de cuotas preferida.</p>
+                <p>Las contrasenas se almacenan con hash scrypt y las sesiones usan cookies HttpOnly con proteccion CSRF. El usuario, correo y telefono se mantienen unicos para evitar confusiones entre cuentas.</p>
+                <p>No vendemos datos personales ni compartimos informacion de cuenta con plataformas externas. Las cuotas y datos deportivos se usan solo para generar probabilidades, analisis y alertas dentro de la app.</p>
+                <p>Las predicciones son estimaciones probabilisticas. Ninguna senal, combinacion o analisis garantiza resultados, ganancias o aciertos seguros.</p>
+              </article>
+            </section>
+          </div>
+
+          <aside class="side-column">
+            <div class="status-card">
+              <span class="status-light" id="statusDot"></span>
+              <div>
+                <strong id="feedMode">Conectando</strong>
+                <span id="lastRefresh">Sin datos</span>
+                <span class="realtime-chip" id="tickStatus">Actualiza cada 1s</span>
+              </div>
+            </div>
+
+            <article class="analysis-card" id="analysisCard"></article>
+          </aside>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Navegacion principal">
+        <button class="active" type="button" data-view="home">
+          Inicio
+        </button>
+        <button type="button" data-view="profile">
+          Perfil
+        </button>
+      </nav>
+    </div>
+  </body>
+</html>
