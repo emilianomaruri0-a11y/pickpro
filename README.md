@@ -45,6 +45,7 @@ Variables utiles:
 - `PORT`: puerto local, por defecto `4173`.
 - `POLL_INTERVAL_MS`: intervalo de consulta al proveedor, por defecto `10800000` con API para cuidar cuota gratis.
 - `LIVE_TICK_INTERVAL_MS`: intervalo del stream visual en la app, por defecto `1000`.
+- `EVENT_CACHE_TTL_HOURS`: horas que conserva eventos recientes para marcarlos en vivo por horario aunque el proveedor ya no devuelva cuotas.
 - `SPORT_KEYS`: lista separada por comas de deportes/ligas soportadas por el proveedor.
 - `ODDS_REGIONS`: regiones de casas para The Odds API.
 - `ODDS_MARKETS`: mercados de cuotas, por defecto `h2h`; usa `h2h,spreads,totals` solo si tienes mas cuota.

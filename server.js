@@ -42,11 +42,13 @@ const SPORT_KEYS = (
   .filter(Boolean);
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || (ODDS_API_KEY ? 10800000 : 1000));
 const LIVE_TICK_INTERVAL_MS = Number(process.env.LIVE_TICK_INTERVAL_MS || 1000);
+const EVENT_CACHE_TTL_MS = Number(process.env.EVENT_CACHE_TTL_HOURS || 36) * 60 * 60 * 1000;
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 12) * 60 * 60 * 1000;
 const ALLOW_SIGNUPS = process.env.ALLOW_SIGNUPS !== "false";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 
 const clients = new Set();
+const eventCache = new Map();
 const sessions = new Map();
 const authAttempts = new Map();
 const oauthStates = new Map();
@@ -1072,6 +1074,90 @@ function withTimeOffset(hours) {
   return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
 }
 
+function liveWindowMsForSport(sportKey = "") {
+  if (sportKey.includes("baseball")) return 4.5 * 60 * 60 * 1000;
+  if (sportKey.includes("soccer")) return 2.25 * 60 * 60 * 1000;
+  if (sportKey.includes("basketball")) return 2.75 * 60 * 60 * 1000;
+  if (sportKey.includes("americanfootball")) return 4 * 60 * 60 * 1000;
+  if (sportKey.includes("icehockey")) return 2.75 * 60 * 60 * 1000;
+  if (sportKey.includes("tennis")) return 5 * 60 * 60 * 1000;
+  if (sportKey.includes("mma") || sportKey.includes("boxing")) return 5 * 60 * 60 * 1000;
+  return 3 * 60 * 60 * 1000;
+}
+
+function eventCacheKey(event) {
+  return event.id || `${event.sportKey || ""}-${event.homeTeam || ""}-${event.awayTeam || ""}-${event.commenceTime || ""}`;
+}
+
+function runtimeStatusForEvent(event, now = Date.now()) {
+  if (event.status === "final") return "final";
+  const startMs = new Date(event.commenceTime).getTime();
+  if (!Number.isFinite(startMs)) return event.status || "upcoming";
+  if (now < startMs) return "upcoming";
+  if (now <= startMs + liveWindowMsForSport(event.sportKey)) return "live";
+  return "final";
+}
+
+function normalizeRuntimeEvent(event, now = Date.now()) {
+  const status = runtimeStatusForEvent(event, now);
+  let scoreSource = event.scoreSource || "";
+  if (status === "live" && !event.score) scoreSource = "En vivo por horario";
+  if (status === "final" && !event.score) scoreSource = "Final estimado; esperando marcador oficial";
+  return {
+    ...event,
+    status,
+    scoreSource
+  };
+}
+
+function shouldRetainCachedEvent(event, now = Date.now()) {
+  const startMs = new Date(event.commenceTime).getTime();
+  if (!Number.isFinite(startMs)) return false;
+  return Math.abs(now - startMs) <= EVENT_CACHE_TTL_MS;
+}
+
+function normalizeRuntimeEvents(events, now = Date.now()) {
+  return events
+    .map((event) => normalizeRuntimeEvent(event, now))
+    .filter((event) => shouldRetainCachedEvent(event, now) || event.status !== "final")
+    .sort((a, b) => {
+      const liveDelta = Number(b.status === "live") - Number(a.status === "live");
+      if (liveDelta) return liveDelta;
+      return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
+    });
+}
+
+function mergeWithEventCache(events) {
+  const now = Date.now();
+  const merged = [];
+  const seen = new Set();
+
+  normalizeRuntimeEvents(events, now).forEach((event) => {
+    const key = eventCacheKey(event);
+    seen.add(key);
+    eventCache.set(key, event);
+    merged.push(event);
+  });
+
+  for (const [key, cachedEvent] of eventCache.entries()) {
+    if (!shouldRetainCachedEvent(cachedEvent, now)) {
+      eventCache.delete(key);
+      continue;
+    }
+    if (!seen.has(key)) {
+      const event = normalizeRuntimeEvent(cachedEvent, now);
+      eventCache.set(key, event);
+      merged.push(event);
+    }
+  }
+
+  return normalizeRuntimeEvents(merged, now);
+}
+
+function cachedProviderEvents() {
+  return normalizeRuntimeEvents(Array.from(eventCache.values()));
+}
+
 function softmax(scores) {
   const maxScore = Math.max(...scores.map((item) => item.score));
   const exps = scores.map((item) => ({ key: item.key, value: Math.exp(item.score - maxScore) }));
@@ -1299,16 +1385,32 @@ function calculatePrediction(event) {
     valueCandidate.edge >= 0.035 && valueCandidate.probability >= 0.32 ? valueCandidate : sortedByProbability[0];
   const leadGap = (sortedByProbability[0]?.probability || 0) - (sortedByProbability[1]?.probability || 0);
   const agreement = clamp(1 - standardDeviation(rows.map((row) => row[pick.key]).filter(Boolean)) / 0.22, 0.35, 1);
+  const samplePenalty = rows.length >= 5 ? 0 : rows.length >= 3 ? 4 : 8;
+  const liveWithoutScorePenalty = event.status === "live" && !event.score ? 6 : 0;
+  const volatilityPenalty = volatility > 0.3 ? 7 : volatility > 0.22 ? 3 : 0;
+  const probabilityFloor = keys.includes("draw") ? 0.36 : 0.52;
+  const rawConfidence = 52 + leadGap * 80 + marketDepth * 20 + agreement * 10 - volatility * 26 + Math.max(0, pick.edge) * 95;
   const confidence = Math.round(
-    clamp(52 + leadGap * 72 + marketDepth * 18 + agreement * 9 - volatility * 22 + Math.max(0, pick.edge) * 80, 45, 88)
+    clamp(rawConfidence - samplePenalty - liveWithoutScorePenalty - volatilityPenalty, 42, 92)
   );
+  const strongSignal =
+    confidence >= 74 &&
+    pick.edge >= 0.03 &&
+    pick.probability >= probabilityFloor &&
+    volatility <= 0.28 &&
+    rows.length >= 2;
+  const moderateSignal =
+    confidence >= 66 &&
+    pick.edge >= 0.015 &&
+    pick.probability >= probabilityFloor - 0.05 &&
+    volatility <= 0.34;
   const recommendation =
-    pick.edge >= 0.045 && confidence >= 68
-      ? "Valor alto"
-      : pick.edge >= 0.02 && confidence >= 60
+    strongSignal
+      ? "Filtro fuerte"
+      : moderateSignal
         ? "Valor moderado"
         : "Vigilar";
-  const risk = volatility > 0.25 || confidence < 58 ? "Alto" : confidence >= 72 && pick.edge > 0.035 ? "Bajo" : "Medio";
+  const risk = volatility > 0.3 || confidence < 62 || !moderateSignal ? "Alto" : strongSignal ? "Bajo" : "Medio";
 
   return {
     pick: {
@@ -1317,6 +1419,7 @@ function calculatePrediction(event) {
       confidence,
       recommendation,
       risk,
+      strictSignal: strongSignal,
       trend: buildTrend(event, pick.key, pick.probability),
       reasons: buildReasons(event, pick.key, modelProbabilities, marketProbabilities)
     },
@@ -1538,7 +1641,12 @@ function transformOddsApiEvent(item, sportKey, scoreInfo = null) {
     homeTeam: item.home_team || "Local",
     awayTeam: item.away_team || "Visitante",
     venue: "Proveedor externo",
-    status: scoreInfo?.completed ? "final" : new Date(item.commence_time).getTime() < Date.now() ? "live" : "upcoming",
+    status: runtimeStatusForEvent({
+      sportKey,
+      commenceTime: item.commence_time,
+      status: scoreInfo?.completed ? "final" : "upcoming",
+      score: scoreInfo?.score || null
+    }),
     commenceTime: item.commence_time,
     score: scoreInfo?.score || null,
     scoreSource: scoreInfo?.score ? "Marcador oficial del proveedor" : "",
@@ -1638,9 +1746,15 @@ async function refreshFeed(reason = "schedule") {
   if (ODDS_API_KEY) {
     const liveFeed = await fetchLiveFeed();
     if (liveFeed.events.length) {
-      events = liveFeed.events;
+      events = mergeWithEventCache(liveFeed.events);
       provider = "The Odds API";
       feedMode = "live";
+      quota = liveFeed.quota;
+    } else if (cachedProviderEvents().length) {
+      events = cachedProviderEvents();
+      provider = "The Odds API";
+      feedMode = "live";
+      providerErrors.push(...liveFeed.errors, "Sin cuotas nuevas; usando eventos recientes en cache para mantener estados en vivo.");
       quota = liveFeed.quota;
     } else {
       events = buildDemoFeed();
@@ -1654,7 +1768,7 @@ async function refreshFeed(reason = "schedule") {
   }
 
   feedState = {
-    events: enrichEvents(events),
+    events: enrichEvents(normalizeRuntimeEvents(events)),
     feedMode,
     provider,
     providerErrors,
@@ -1696,7 +1810,10 @@ function filterEvents(searchParams) {
 }
 
 function buildPayload(events) {
-  const opportunities = events.filter((event) => event.prediction?.pick?.recommendation !== "Vigilar").length;
+  const opportunities = events.filter((event) => {
+    const pick = event.prediction?.pick;
+    return pick && pick.recommendation !== "Vigilar" && pick.confidence >= 72 && pick.risk !== "Alto";
+  }).length;
   const sports = [...new Set(feedState.events.map((event) => event.sport))].sort();
 
   return {
@@ -1729,7 +1846,8 @@ function tickPredictions() {
   if (feedState.feedMode === "demo" || feedState.feedMode === "demo-fallback") {
     feedState.events = enrichEvents(buildDemoFeed());
   } else {
-    feedState.events = enrichEvents(feedState.events);
+    const cachedEvents = cachedProviderEvents();
+    feedState.events = enrichEvents(cachedEvents.length ? cachedEvents : normalizeRuntimeEvents(feedState.events));
   }
 
   feedState.lastRefreshAt = nowIso();

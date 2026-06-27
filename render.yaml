@@ -20,6 +20,8 @@ services:
         value: 10800000
       - key: LIVE_TICK_INTERVAL_MS
         value: 1000
+      - key: EVENT_CACHE_TTL_HOURS
+        value: 36
       - key: SESSION_TTL_HOURS
         value: 12
       - key: THE_ODDS_API_KEY

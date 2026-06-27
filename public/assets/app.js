@@ -35,6 +35,7 @@ const elements = {
   heroWinRate: document.querySelector("#heroWinRate"),
   userCount: document.querySelector("#userCount"),
   profileButton: document.querySelector("#profileButton"),
+  profileUsername: document.querySelector("#profileUsername"),
   parlayShortcut: document.querySelector("#parlayShortcut"),
   hitsShortcut: document.querySelector("#hitsShortcut"),
   featuredShortcut: document.querySelector("#featuredShortcut"),
@@ -277,6 +278,7 @@ function probabilityRows(event) {
 }
 
 function confidenceLabel(confidence) {
+  if (confidence >= 78) return "Filtro fuerte";
   return confidence >= 70 ? "Alta confianza" : "Media confianza";
 }
 
@@ -284,6 +286,29 @@ function pickSubtitle(event) {
   const pick = event.prediction.pick;
   if (pick.key === "draw") return "Empate";
   return `${pick.label} gana`;
+}
+
+function isStrictPick(event) {
+  const pick = event?.prediction?.pick;
+  if (!pick?.bestOdds) return false;
+  if (pick.recommendation === "Vigilar") return false;
+  if (pick.confidence < 72) return false;
+  if (pick.risk === "Alto") return false;
+  return true;
+}
+
+function strictEvents() {
+  const strict = sortedEvents().filter(isStrictPick);
+  return strict.length ? strict : sortedEvents().filter((event) => event.prediction?.pick?.bestOdds && event.prediction?.pick?.confidence >= 68);
+}
+
+function displayUsername(user = state.user || {}) {
+  return user.handle || user.username || user.email || user.phone || "Perfil";
+}
+
+function renderHeaderUser() {
+  if (!elements.profileUsername) return;
+  elements.profileUsername.textContent = displayUsername();
 }
 
 async function authFetch(url, options = {}) {
@@ -315,6 +340,7 @@ async function loadSession() {
   state.settings = { ...state.settings, ...(data.user.settings || {}), theme: "dark" };
   elements.oddsFormat.value = state.settings.oddsFormat;
   document.body.dataset.theme = "dark";
+  renderHeaderUser();
   renderProfile();
 }
 
@@ -354,7 +380,7 @@ function eventMatchesSearch(event, query) {
 function buildClientSummary(events) {
   return {
     totalEvents: events.length,
-    opportunities: events.filter((event) => event.prediction?.pick?.recommendation !== "Vigilar").length,
+    opportunities: events.filter(isStrictPick).length,
     liveEvents: events.filter((event) => event.status === "live").length,
     averageConfidence: events.length
       ? Math.round(events.reduce((sum, event) => sum + event.prediction.pick.confidence, 0) / events.length)
@@ -401,7 +427,7 @@ function renderStatus() {
   elements.statusDot.className = `status-light ${payload.feedMode === "live" || payload.feedMode === "demo" ? "live" : ""}`;
   elements.totalEvents.textContent = summary.totalEvents || 0;
   elements.averageConfidence.textContent = `${summary.averageConfidence || 0}%`;
-  elements.heroWinRate.textContent = `${Math.max(summary.averageConfidence || 0, 87)}%`;
+  elements.heroWinRate.textContent = `${summary.averageConfidence || 0}%`;
   elements.userCount.textContent = `${(3.2 + (summary.totalEvents || 0) / 100).toFixed(1)}K`;
 }
 
@@ -460,7 +486,7 @@ function renderMatchCard(event) {
     event.status === "live"
       ? event.scoreSource || "Marcador en vivo"
       : event.status === "final"
-        ? "Marcador final"
+        ? event.scoreSource || "Marcador final"
         : formatTime(event.commenceTime);
   const meters = probabilityRows(event);
 
@@ -643,12 +669,12 @@ function bindFeaturedCards(container) {
 
 function renderFeatured() {
   if (!elements.featuredPicks) return;
-  elements.featuredPicks.innerHTML = featuredCardsHtml(sortedEvents().slice(0, 4));
+  elements.featuredPicks.innerHTML = featuredCardsHtml(strictEvents().slice(0, 4));
   bindFeaturedCards(elements.featuredPicks);
 }
 
 function renderDailyPredictions() {
-  const picks = sortedEvents()
+  const picks = strictEvents()
     .filter((event) => event.prediction.pick.bestOdds)
     .slice(0, 3);
   elements.dailyPredictionList.innerHTML = picks.length
@@ -769,9 +795,12 @@ function chooseParlayLegs(event, maxLegs = 5) {
       if (confidenceDelta) return confidenceDelta;
       return deterministicRatio(`${event.id}-${a.market}`) - deterministicRatio(`${event.id}-${b.market}`);
     });
-  const highConfidence = pool.filter((leg) => leg.confidence >= 73).length;
-  const targetCount = Math.min(maxLegs, highConfidence >= 5 ? 5 : highConfidence >= 4 ? 4 : 3, pool.length);
-  return pool.slice(0, targetCount).sort((a, b) => b.confidence - a.confidence);
+  const minimumConfidence = event.prediction?.pick?.strictSignal ? 74 : 70;
+  const filteredPool = pool.filter((leg) => leg.confidence >= minimumConfidence);
+  const candidatePool = filteredPool.length >= 3 ? filteredPool : pool.slice(0, 3);
+  const highConfidence = candidatePool.filter((leg) => leg.confidence >= 76).length;
+  const targetCount = Math.min(maxLegs, highConfidence >= 5 ? 5 : highConfidence >= 4 ? 4 : 3, candidatePool.length);
+  return candidatePool.slice(0, targetCount).sort((a, b) => b.confidence - a.confidence);
 }
 
 function parlayLegForEvent(event, index) {
@@ -780,7 +809,7 @@ function parlayLegForEvent(event, index) {
 }
 
 function buildParlayTicket(sportKey, label) {
-  const candidates = sortedEvents()
+  const candidates = strictEvents()
     .filter((event) => event.sportKey === sportKey && event.prediction?.pick?.bestOdds)
     .slice(0, 6);
   if (!candidates.length) return null;
@@ -1034,7 +1063,7 @@ function renderHitsPage() {
 
 function renderFeaturedPage() {
   if (!elements.featuredPageContent) return;
-  const events = sortedEvents().slice(0, 12);
+  const events = strictEvents().slice(0, 12);
   elements.featuredPageContent.innerHTML = `
     <div class="detail-actions">
       <button class="text-button detail-back" id="featuredBackButton" type="button">Volver a inicio</button>
@@ -1097,7 +1126,7 @@ function renderMatchDetail() {
     <article class="match-detail-card">
       <div class="match-top">
         <span>${escapeHtml(event.league)} - ${escapeHtml(event.status === "live" ? "EN VIVO" : "PROXIMO")}</span>
-        <span>${escapeHtml(event.status === "live" ? event.scoreSource || "Marcador en vivo" : formatTime(event.commenceTime))}</span>
+        <span>${escapeHtml(event.status === "live" ? event.scoreSource || "Marcador en vivo" : event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime))}</span>
       </div>
       <div class="detail-match-grid">
         <div class="team">
@@ -1179,6 +1208,7 @@ function renderAnalysis() {
 function renderProfile() {
   const user = state.user || {};
   if (!elements.profileDetails) return;
+  renderHeaderUser();
   if (
     elements.profileHandleInput &&
     !state.profileHandleDirty &&
