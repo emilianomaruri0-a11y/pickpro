@@ -24,6 +24,12 @@ services:
         value: 36
       - key: SESSION_TTL_HOURS
         value: 12
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_KV_TABLE
+        value: pickpro_kv
       - key: THE_ODDS_API_KEY
         sync: false
       - key: APP_BASE_URL

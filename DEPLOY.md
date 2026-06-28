@@ -69,7 +69,27 @@ EVENT_CACHE_TTL_HOURS=36
 SESSION_TTL_HOURS=12
 ```
 
-6. Si luego conectas Google login, agrega tambien:
+6. Para que los registros de usuarios no se pierdan en Render, conecta una base de datos gratis en Supabase y agrega tambien:
+
+```env
+SUPABASE_URL=https://TU_PROYECTO.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
+SUPABASE_KV_TABLE=pickpro_kv
+```
+
+En Supabase, abre `SQL Editor` y ejecuta:
+
+```sql
+create table if not exists public.pickpro_kv (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+Guarda `SUPABASE_SERVICE_ROLE_KEY` solo en Render. No la subas a GitHub ni la pegues en el frontend.
+
+7. Si luego conectas Google login, agrega tambien:
 
 ```env
 GOOGLE_CLIENT_ID=...
@@ -82,4 +102,4 @@ Para un dominio como `pickpro.mx` o `tupickpro.com` normalmente debes comprar el
 
 ## Importante
 
-La app actual guarda usuarios en `data/users.json`. Eso sirve para pruebas, pero en un hosting gratis los archivos pueden reiniciarse en despliegues o reinicios. Antes de abrir registros a muchas personas, conviene migrar usuarios a una base de datos como Supabase, Neon, Postgres o SQLite con disco persistente.
+Si no configuras Supabase, la app guarda usuarios en `data/users.json`. Eso sirve para pruebas locales, pero en hosting gratis los archivos pueden reiniciarse en despliegues o reinicios. En Render usa Supabase para cuentas reales.

@@ -51,8 +51,31 @@ Variables utiles:
 - `ODDS_MARKETS`: mercados de cuotas, por defecto `h2h`; usa `h2h,spreads,totals` solo si tienes mas cuota.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_BASE_URL`: activan inicio con Google real.
 - `SESSION_TTL_HOURS`: duracion de sesion.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_KV_TABLE`: guardan usuarios en Supabase para que las cuentas sobrevivan reinicios y despliegues en Render.
 
 El conector usa el endpoint de cuotas de The Odds API con momios decimales y fechas ISO. Las plataformas como Draftea o Playdoit requieren una API oficial, feed autorizado o acuerdo de datos; si no hay clave autorizada, el dashboard mantiene el modo demo y deja visible el estado del proveedor.
+
+## Usuarios persistentes en Render
+
+Render gratis no debe usarse como almacenamiento permanente de cuentas. Para que los registros no se pierdan, crea una tabla en Supabase:
+
+```sql
+create table if not exists public.pickpro_kv (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+Luego agrega en Render:
+
+```env
+SUPABASE_URL=https://TU_PROYECTO.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
+SUPABASE_KV_TABLE=pickpro_kv
+```
+
+La clave `service_role` debe quedarse solo en variables de entorno del servidor.
 
 ## Seguridad y cuenta
 

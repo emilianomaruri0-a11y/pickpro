@@ -46,6 +46,11 @@ const EVENT_CACHE_TTL_MS = Number(process.env.EVENT_CACHE_TTL_HOURS || 36) * 60 
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 12) * 60 * 60 * 1000;
 const ALLOW_SIGNUPS = process.env.ALLOW_SIGNUPS !== "false";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
+const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/g, "");
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_KV_TABLE =
+  String(process.env.SUPABASE_KV_TABLE || "pickpro_kv").replace(/[^a-zA-Z0-9_]/g, "") || "pickpro_kv";
+const HAS_SUPABASE_STORE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 
 const clients = new Set();
 const eventCache = new Map();
@@ -72,6 +77,7 @@ const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon"
@@ -91,25 +97,51 @@ function securityHeaders(extra = {}) {
 }
 
 async function ensureDataStore() {
+  if (HAS_SUPABASE_STORE) {
+    const remoteUsers = await readRemoteValue("users", null);
+    if (Array.isArray(remoteUsers)) {
+      users = remoteUsers.map(normalizeStoredUser);
+    } else {
+      users = await readLocalUsers();
+      await saveUsers();
+    }
+    return;
+  }
+
+  users = await readLocalUsers();
+  await saveUsers();
+}
+
+async function readLocalUsers() {
   await fsp.mkdir(DATA_DIR, { recursive: true });
   try {
-    users = JSON.parse(await fsp.readFile(USERS_FILE, "utf8"));
-    if (!Array.isArray(users)) users = [];
-    users = users.map(normalizeStoredUser);
-    await saveUsers();
+    const storedUsers = JSON.parse(await fsp.readFile(USERS_FILE, "utf8"));
+    return Array.isArray(storedUsers) ? storedUsers.map(normalizeStoredUser) : [];
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    users = [];
-    await saveUsers();
+    return [];
   }
 }
 
 async function saveUsers() {
+  if (HAS_SUPABASE_STORE) {
+    await writeRemoteValue("users", users);
+    return;
+  }
+
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await fsp.writeFile(USERS_FILE, JSON.stringify(users, null, 2), { mode: 0o600 });
 }
 
 async function appendRecoveryOutbox(entry) {
+  if (HAS_SUPABASE_STORE) {
+    const outbox = await readRemoteValue("recovery_outbox", []);
+    const nextOutbox = Array.isArray(outbox) ? outbox : [];
+    nextOutbox.unshift(entry);
+    await writeRemoteValue("recovery_outbox", nextOutbox.slice(0, 50));
+    return;
+  }
+
   await fsp.mkdir(DATA_DIR, { recursive: true });
   let outbox = [];
   try {
@@ -120,6 +152,49 @@ async function appendRecoveryOutbox(entry) {
   }
   outbox.unshift(entry);
   await fsp.writeFile(RECOVERY_OUTBOX_FILE, JSON.stringify(outbox.slice(0, 50), null, 2), { mode: 0o600 });
+}
+
+function supabaseHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    ...extra
+  };
+}
+
+function supabaseKvUrl(query = "") {
+  return `${SUPABASE_URL}/rest/v1/${SUPABASE_KV_TABLE}${query}`;
+}
+
+async function readRemoteValue(key, fallbackValue) {
+  const query = `?key=eq.${encodeURIComponent(key)}&select=value`;
+  const response = await fetch(supabaseKvUrl(query), {
+    headers: supabaseHeaders({ accept: "application/json" })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`No se pudo leer Supabase (${response.status}): ${detail}`);
+  }
+
+  const rows = await response.json();
+  return Array.isArray(rows) && rows[0] ? rows[0].value : fallbackValue;
+}
+
+async function writeRemoteValue(key, value) {
+  const response = await fetch(supabaseKvUrl("?on_conflict=key"), {
+    method: "POST",
+    headers: supabaseHeaders({
+      "content-type": "application/json",
+      prefer: "resolution=merge-duplicates,return=minimal"
+    }),
+    body: JSON.stringify({ key, value, updated_at: new Date().toISOString() })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`No se pudo guardar en Supabase (${response.status}): ${detail}`);
+  }
 }
 
 function normalizeUsername(username) {
@@ -2148,6 +2223,7 @@ ensureDataStore()
     server.listen(PORT, () => {
       console.log(`PickPro listo en http://localhost:${PORT}`);
       console.log(`Modo: ${feedState.feedMode} | Proveedor: ${feedState.provider}`);
+      console.log(`Usuarios: ${HAS_SUPABASE_STORE ? "Supabase" : "archivo local"}`);
     });
   })
   .catch((error) => {
