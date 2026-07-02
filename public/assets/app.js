@@ -54,7 +54,9 @@ const elements = {
   profileDetails: document.querySelector("#profileDetails"),
   profileForm: document.querySelector("#profileForm"),
   profileHandleInput: document.querySelector("#profileHandleInput"),
-  profileMessage: document.querySelector("#profileMessage")
+  profileMessage: document.querySelector("#profileMessage"),
+  launchScreen: document.querySelector("#launchScreen"),
+  launchAction: document.querySelector("#launchAction")
 };
 
 function setupViews() {
@@ -220,8 +222,7 @@ function liveClockText(event) {
 
 function eventTimeHtml(event) {
   if (event.status === "live") {
-    const clock = liveClockText(event);
-    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>En vivo${clock ? ` - ${escapeHtml(clock)}` : ""}</span>`;
+    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>LIVE</span>`;
   }
   const text = event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime);
   return `<span>${escapeHtml(text)}</span>`;
@@ -240,6 +241,30 @@ function scoreSubline(event, pick) {
   }
   if (event.status === "final") return event.scoreSource || "Marcador final";
   return `Prediccion: ${pick.label}`;
+}
+
+function liveFooterText(event) {
+  if (event.status !== "live") return formatTime(event.commenceTime);
+  const minutes = elapsedGameMinutes(event);
+  if (event.sportKey?.includes("soccer")) return `${Math.max(1, Math.min(120, minutes))}:00`;
+  if (event.sportKey?.includes("baseball")) return event.score ? "Marcador oficial" : "En juego";
+  return `${minutes} min`;
+}
+
+function compactStatusStats(event) {
+  if (event.status !== "live") {
+    return [selectedBookmakerName(), eventStatusLabel(event)];
+  }
+  if (event.score) {
+    return [`${event.score.home} : ${event.score.away}`, "Marcador oficial"];
+  }
+  if (event.sportKey?.includes("baseball")) {
+    return ["Conteo 0 : 0", "Outs 0 : 0"];
+  }
+  if (event.sportKey?.includes("soccer")) {
+    return ["Tiempo real", "Marcador oficial"];
+  }
+  return ["Actualizando", "Tiempo real"];
 }
 
 function slugify(value) {
@@ -381,6 +406,35 @@ function displayUsername(user = state.user || {}) {
 function renderHeaderUser() {
   if (!elements.profileUsername) return;
   elements.profileUsername.textContent = displayUsername();
+}
+
+function setLaunchLoading(message = "Preparando tus mejores picks") {
+  if (!elements.launchAction) return;
+  elements.launchAction.innerHTML = `
+    <div class="launch-loading">
+      <span class="launch-spinner" aria-hidden="true"></span>
+      <strong>Cargando...</strong>
+      <small>${escapeHtml(message)}</small>
+    </div>`;
+}
+
+function enterAppFromLaunch() {
+  showView("home");
+  document.body.classList.add("app-entered");
+  document.body.classList.remove("app-booting");
+  elements.launchScreen?.setAttribute("aria-hidden", "true");
+}
+
+function setLaunchReady() {
+  if (!elements.launchAction) return;
+  document.body.classList.add("launch-ready");
+  elements.launchAction.innerHTML = `
+    <button class="launch-start-button" id="launchStartButton" type="button" aria-label="Comenzar">
+      <span class="launch-bolt" aria-hidden="true">+</span>
+      <strong>COMENZAR</strong>
+      <span aria-hidden="true">></span>
+    </button>`;
+  document.querySelector("#launchStartButton")?.addEventListener("click", enterAppFromLaunch);
 }
 
 async function authFetch(url, options = {}) {
@@ -528,31 +582,13 @@ function renderSportTabs() {
     });
   });
 
-  elements.quickTags.innerHTML = sportOptions
-    .map(
-      (item) => `
-      <button type="button" data-sport-key="${escapeHtml(item.value)}" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
-        <img src="${escapeHtml(item.logo)}" alt="${escapeHtml(item.label)}" />
-        <span class="visually-hidden">${escapeHtml(item.label)}</span>
-      </button>`
-    )
-    .join("");
-  elements.quickTags.querySelectorAll("[data-sport-key]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.sportKey = button.dataset.sportKey;
-      elements.searchInput.value = "";
-      applyCurrentFilters();
-      if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
-        state.selectedId = state.events[0]?.id || null;
-      }
-      render();
-    });
-  });
+  elements.quickTags.innerHTML = "";
 }
 
 function renderMatchCard(event) {
   const pick = event.prediction.pick;
   const meters = probabilityRows(event);
+  const compactStats = compactStatusStats(event);
 
   return `
     <article class="match-card ${state.selectedId === event.id ? "selected" : ""}" data-event-id="${escapeHtml(event.id)}">
@@ -570,7 +606,11 @@ function renderMatchCard(event) {
         </div>
         <div class="compact-status-row">
           ${eventTimeHtml(event)}
-          <span>${escapeHtml(event.status === "live" ? scoreSubline(event, pick) : formatTime(event.commenceTime))}</span>
+          <span>${escapeHtml(liveFooterText(event))}</span>
+          <span class="compact-stat" aria-hidden="true">|</span>
+          <span class="compact-stat">${escapeHtml(compactStats[0])}</span>
+          <span class="compact-stat" aria-hidden="true">|</span>
+          <span class="compact-stat">${escapeHtml(compactStats[1])}</span>
         </div>
       </div>
       <div class="compact-probability" aria-label="Probabilidades en tiempo real">
@@ -1269,7 +1309,7 @@ function renderSearchAiPage() {
           <span class="nav-search-icon" aria-hidden="true"></span>
           Foto
         </label>
-        <input id="aiQuestionInput" name="question" autocomplete="off" placeholder="Escribe equipo, partido o duda..." />
+        <input id="aiQuestionInput" name="question" type="text" autocomplete="off" inputmode="text" placeholder="Escribe equipo, partido o duda..." />
         <button type="submit">Enviar</button>
       </form>
       <p class="ai-photo-name" id="aiPhotoName"></p>
@@ -1277,6 +1317,7 @@ function renderSearchAiPage() {
 
   const photoInput = elements.searchAiContent.querySelector("#aiPhotoInput");
   const photoName = elements.searchAiContent.querySelector("#aiPhotoName");
+  const questionInput = elements.searchAiContent.querySelector("#aiQuestionInput");
   photoInput?.addEventListener("change", () => {
     const file = photoInput.files?.[0];
     photoName.textContent = file ? `Foto lista: ${file.name}` : "";
@@ -1284,7 +1325,6 @@ function renderSearchAiPage() {
 
   elements.searchAiContent.querySelector("#aiChatForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const questionInput = elements.searchAiContent.querySelector("#aiQuestionInput");
     const question = questionInput.value.trim();
     const file = photoInput?.files?.[0] || null;
     if (!question && !file) return;
@@ -1300,6 +1340,7 @@ function renderSearchAiPage() {
     });
     renderSearchAiPage();
   });
+  questionInput?.focus({ preventScroll: true });
 
   document.querySelector("#searchBackButton")?.addEventListener("click", () => showView("home"));
 }
@@ -1454,7 +1495,7 @@ function showView(view) {
   featuredView.hidden = view !== "featured";
   sourcesView.hidden = view !== "sources";
   searchAiView.hidden = view !== "search";
-  document.querySelectorAll(".bottom-nav button").forEach((button) => {
+  document.querySelectorAll(".bottom-nav-shell [data-view]").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === view);
   });
   elements.parlayShortcut?.classList.toggle("active", view === "parlay");
@@ -1742,7 +1783,7 @@ function bindEvents() {
       render();
     });
   });
-  document.querySelectorAll(".bottom-nav button[data-view]").forEach((button) => {
+  document.querySelectorAll(".bottom-nav-shell [data-view]").forEach((button) => {
     button.addEventListener("click", () => {
       showView(button.dataset.view);
     });
@@ -1753,14 +1794,17 @@ function bindEvents() {
 
 async function init() {
   try {
+    setLaunchLoading();
     await loadSession();
     bindEvents();
     setupStream();
     await fetchEvents();
     routeFromHash();
+    setLaunchReady();
   } catch (error) {
     if (error.message !== "Sesion requerida") {
       elements.liveMatches.innerHTML = `<div class="empty-message">${escapeHtml(error.message)}</div>`;
+      setLaunchReady();
     }
   }
 }

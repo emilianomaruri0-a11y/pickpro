@@ -29,6 +29,7 @@ const PORT = Number(process.env.PORT || 4173);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = path.join(__dirname, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const RECOVERY_OUTBOX_FILE = path.join(DATA_DIR, "recovery-outbox.json");
 const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || "";
 const ODDS_REGIONS = process.env.ODDS_REGIONS || "us";
@@ -44,7 +45,8 @@ const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || (ODDS_API_KEY ? 
 const LIVE_TICK_INTERVAL_MS = Number(process.env.LIVE_TICK_INTERVAL_MS || 1000);
 const SCORE_POLL_INTERVAL_MS = Number(process.env.SCORE_POLL_INTERVAL_MS || 300000);
 const EVENT_CACHE_TTL_MS = Number(process.env.EVENT_CACHE_TTL_HOURS || 36) * 60 * 60 * 1000;
-const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 12) * 60 * 60 * 1000;
+const SESSION_TTL_HOURS = Math.max(Number(process.env.SESSION_TTL_HOURS || 720), 720);
+const SESSION_TTL_MS = SESSION_TTL_HOURS * 60 * 60 * 1000;
 const ALLOW_SIGNUPS = process.env.ALLOW_SIGNUPS !== "false";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/g, "");
@@ -106,11 +108,13 @@ async function ensureDataStore() {
       users = await readLocalUsers();
       await saveUsers();
     }
+    await loadSessions();
     return;
   }
 
   users = await readLocalUsers();
   await saveUsers();
+  await loadSessions();
 }
 
 async function readLocalUsers() {
@@ -132,6 +136,59 @@ async function saveUsers() {
 
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await fsp.writeFile(USERS_FILE, JSON.stringify(users, null, 2), { mode: 0o600 });
+}
+
+function sessionKey(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function normalizeStoredSession(session) {
+  const createdAt = Number(session?.createdAt || Date.now());
+  const expiresAt = Number(session?.expiresAt || 0);
+  return {
+    userId: String(session?.userId || ""),
+    username: String(session?.username || ""),
+    csrfToken: String(session?.csrfToken || ""),
+    createdAt,
+    expiresAt
+  };
+}
+
+async function loadSessions() {
+  sessions.clear();
+  const stored = HAS_SUPABASE_STORE
+    ? await readRemoteValue("sessions", {})
+    : await readLocalSessions();
+
+  Object.entries(stored && typeof stored === "object" ? stored : {}).forEach(([hash, session]) => {
+    const normalized = normalizeStoredSession(session);
+    if (/^[a-f0-9]{64}$/i.test(hash) && normalized.userId && normalized.csrfToken && normalized.expiresAt > Date.now()) {
+      sessions.set(hash, normalized);
+    }
+  });
+  await saveSessions();
+}
+
+async function readLocalSessions() {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  try {
+    return JSON.parse(await fsp.readFile(SESSIONS_FILE, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return {};
+  }
+}
+
+async function saveSessions() {
+  cleanExpiredSessions();
+  const stored = Object.fromEntries(sessions.entries());
+  if (HAS_SUPABASE_STORE) {
+    await writeRemoteValue("sessions", stored);
+    return;
+  }
+
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  await fsp.writeFile(SESSIONS_FILE, JSON.stringify(stored, null, 2), { mode: 0o600 });
 }
 
 async function appendRecoveryOutbox(entry) {
@@ -331,8 +388,8 @@ function clearSessionCookie() {
 
 function cleanExpiredSessions() {
   const now = Date.now();
-  for (const [token, session] of sessions.entries()) {
-    if (session.expiresAt <= now) sessions.delete(token);
+  for (const [hash, session] of sessions.entries()) {
+    if (session.expiresAt <= now) sessions.delete(hash);
   }
 }
 
@@ -340,18 +397,19 @@ function getSession(request) {
   cleanExpiredSessions();
   const token = parseCookies(request).pickpro_session;
   if (!token) return null;
-  const session = sessions.get(token);
+  const tokenHash = sessionKey(token);
+  const session = sessions.get(tokenHash);
   if (!session || session.expiresAt <= Date.now()) {
-    sessions.delete(token);
+    sessions.delete(tokenHash);
     return null;
   }
-  return { token, ...session };
+  return { token, tokenHash, ...session };
 }
 
 function createSession(user) {
   const token = crypto.randomBytes(32).toString("base64url");
   const csrfToken = crypto.randomBytes(24).toString("base64url");
-  sessions.set(token, {
+  sessions.set(sessionKey(token), {
     userId: user.id,
     username: user.username,
     csrfToken,
@@ -533,6 +591,7 @@ async function registerUser(request, response) {
   users.push(user);
   await saveUsers();
   const session = createSession(user);
+  await saveSessions();
   sendLoginResult(response, user, session.csrfToken, session.token);
 }
 
@@ -552,6 +611,7 @@ async function loginUser(request, response) {
   }
 
   const session = createSession(user);
+  await saveSessions();
   sendLoginResult(response, user, session.csrfToken, session.token);
 }
 
@@ -667,6 +727,7 @@ async function updateProfile(request, response, session) {
   user.username = user.email || user.phone || handle;
   session.username = handle;
   await saveUsers();
+  await saveSessions();
   sendJson(response, 200, { ok: true, user: userPublicProfile(user) });
 }
 
@@ -2122,7 +2183,8 @@ async function handleRequest(request, response) {
   if (request.method === "POST" && requestUrl.pathname === "/api/logout") {
     const session = requireAuth(request, response);
     if (!session || !requireCsrf(request, response, session)) return;
-    sessions.delete(session.token);
+    sessions.delete(session.tokenHash);
+    await saveSessions();
     response.writeHead(
       200,
       securityHeaders({

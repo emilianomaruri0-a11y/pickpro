@@ -16,7 +16,25 @@
     <link rel="stylesheet" href="/assets/styles.css" />
     <script defer src="/assets/app.js"></script>
   </head>
-  <body>
+  <body class="app-booting">
+    <section class="launch-screen" id="launchScreen" aria-live="polite">
+      <div class="launch-stadium" aria-hidden="true">
+        <span class="stadium-light left"></span>
+        <span class="stadium-light right"></span>
+        <span class="field-line"></span>
+        <span class="field-circle"></span>
+      </div>
+      <div class="launch-content">
+        <img class="launch-logo" src="/assets/pickpro-logo-clean.png" alt="PickPro" />
+        <div class="launch-action" id="launchAction">
+          <div class="launch-loading">
+            <span class="launch-spinner" aria-hidden="true"></span>
+            <strong>Cargando...</strong>
+            <small>Preparando tus mejores picks</small>
+          </div>
+        </div>
+      </div>
+    </section>
     <div class="pull-refresh" id="pullRefresh" aria-hidden="true">
       <span></span>
       <strong>Actualizar</strong>
@@ -30,7 +48,9 @@
         <div class="header-actions">
           <button class="profile-entry" id="profileButton" type="button" aria-label="Abrir perfil" title="Abrir perfil">
             <span class="profile-username" id="profileUsername">Perfil</span>
-            <img src="/assets/profile-monito.png" alt="" />
+            <span class="profile-avatar" aria-hidden="true">
+              <span></span>
+            </span>
           </button>
         </div>
       </header>
@@ -201,18 +221,15 @@
         </section>
       </main>
 
-      <nav class="bottom-nav" aria-label="Navegacion principal">
-        <button class="active" type="button" data-view="home">
-          Inicio
-        </button>
-        <button type="button" data-view="search">
+      <div class="bottom-nav-shell" aria-label="Navegacion principal">
+        <nav class="bottom-nav">
+          <button class="active" type="button" data-view="home">Inicio</button>
+          <button type="button" data-view="profile">Perfil</button>
+        </nav>
+        <button class="bottom-search-button" type="button" data-view="search" aria-label="Buscar con IA" title="Buscar con IA">
           <span class="nav-search-icon" aria-hidden="true"></span>
-          Buscar
         </button>
-        <button type="button" data-view="profile">
-          Perfil
-        </button>
-      </nav>
+      </div>
     </div>
   </body>
 </html>
