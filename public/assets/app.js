@@ -41,6 +41,7 @@ const elements = {
   hitsShortcut: document.querySelector("#hitsShortcut"),
   featuredShortcut: document.querySelector("#featuredShortcut"),
   sourcesShortcut: document.querySelector("#sourcesShortcut"),
+  dailyPredictionShortcut: document.querySelector("#dailyPredictionShortcut"),
   parlayDailyCard: document.querySelector("#parlayDailyCard"),
   dailyParlayContent: null,
   hitsPageContent: null,
@@ -244,10 +245,10 @@ function scoreSubline(event, pick) {
 }
 
 function liveFooterText(event) {
-  if (event.status !== "live") return formatTime(event.commenceTime);
+  if (event.status !== "live") return "";
   const minutes = elapsedGameMinutes(event);
   if (event.sportKey?.includes("soccer")) return `${Math.max(1, Math.min(120, minutes))}:00`;
-  if (event.sportKey?.includes("baseball")) return event.score ? "Marcador oficial" : "En juego";
+  if (event.sportKey?.includes("baseball")) return "";
   return `${minutes} min`;
 }
 
@@ -589,6 +590,7 @@ function renderMatchCard(event) {
   const pick = event.prediction.pick;
   const meters = probabilityRows(event);
   const compactStats = compactStatusStats(event);
+  const footerText = liveFooterText(event);
 
   return `
     <article class="match-card ${state.selectedId === event.id ? "selected" : ""}" data-event-id="${escapeHtml(event.id)}">
@@ -606,7 +608,7 @@ function renderMatchCard(event) {
         </div>
         <div class="compact-status-row">
           ${eventTimeHtml(event)}
-          <span>${escapeHtml(liveFooterText(event))}</span>
+          ${footerText ? `<span>${escapeHtml(footerText)}</span>` : ""}
           <span class="compact-stat" aria-hidden="true">|</span>
           <span class="compact-stat">${escapeHtml(compactStats[0])}</span>
           <span class="compact-stat" aria-hidden="true">|</span>
@@ -1192,9 +1194,9 @@ function renderFeaturedPage() {
       <span class="source-badge">${events.length} picks</span>
     </div>
     <section class="profile-hero page-hero">
-      <span class="ai-pill"><span class="live-dot"></span> Picks destacados</span>
-      <h1>Predicciones con mayor valor</h1>
-      <p>Selecciona cualquier partido para abrir su analisis y su parlay generado para ese evento.</p>
+      <span class="ai-pill"><span class="live-dot"></span> Picks alta confianza</span>
+      <h1>Predicciones con mayor confianza</h1>
+      <p>Selecciona cualquier partido para abrir su analisis y su parlay generado para ese evento. Son estimaciones de alta confianza, no resultados garantizados.</p>
     </section>
     <div class="featured-grid page-grid" id="featuredPageGrid">
       ${featuredCardsHtml(events)}
@@ -1304,11 +1306,11 @@ function renderSearchAiPage() {
         }
       </div>
       <form class="ai-chat-form" id="aiChatForm">
-        <label class="ai-photo-button">
-          <input id="aiPhotoInput" type="file" accept="image/*" />
+        <button class="ai-photo-button" id="aiPhotoButton" type="button">
           <span class="nav-search-icon" aria-hidden="true"></span>
           Foto
-        </label>
+        </button>
+        <input class="ai-file-input" id="aiPhotoInput" type="file" accept="image/*" />
         <input id="aiQuestionInput" name="question" type="text" autocomplete="off" inputmode="text" placeholder="Escribe equipo, partido o duda..." />
         <button type="submit">Enviar</button>
       </form>
@@ -1316,11 +1318,16 @@ function renderSearchAiPage() {
     </article>`;
 
   const photoInput = elements.searchAiContent.querySelector("#aiPhotoInput");
+  const photoButton = elements.searchAiContent.querySelector("#aiPhotoButton");
   const photoName = elements.searchAiContent.querySelector("#aiPhotoName");
   const questionInput = elements.searchAiContent.querySelector("#aiQuestionInput");
+  photoButton?.addEventListener("click", () => photoInput?.click());
   photoInput?.addEventListener("change", () => {
     const file = photoInput.files?.[0];
     photoName.textContent = file ? `Foto lista: ${file.name}` : "";
+  });
+  questionInput?.addEventListener("pointerdown", () => {
+    window.setTimeout(() => questionInput.focus({ preventScroll: true }), 0);
   });
 
   elements.searchAiContent.querySelector("#aiChatForm")?.addEventListener("submit", (event) => {
@@ -1511,7 +1518,7 @@ function showView(view) {
   const hashMap = {
     parlay: "#/parlay-del-dia",
     hits: "#/acertados-de-hoy",
-    featured: "#/picks-destacados",
+    featured: "#/picks-alta-confianza",
     sources: "#/fuentes-de-cuotas",
     search: "#/busqueda-ia"
   };
@@ -1534,7 +1541,7 @@ function routeFromHash() {
     showView("hits");
     return;
   }
-  if (hash === "#/picks-destacados") {
+  if (hash === "#/picks-alta-confianza" || hash === "#/picks-destacados") {
     showView("featured");
     return;
   }
@@ -1752,6 +1759,9 @@ function bindEvents() {
   });
   elements.sourcesShortcut?.addEventListener("click", () => {
     showView("sources");
+  });
+  elements.dailyPredictionShortcut?.addEventListener("click", () => {
+    showView("featured");
   });
   elements.profileForm?.addEventListener("submit", (event) => {
     saveProfile(event).catch((error) => {

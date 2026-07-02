@@ -18,14 +18,11 @@
   </head>
   <body class="app-booting">
     <section class="launch-screen" id="launchScreen" aria-live="polite">
-      <div class="launch-stadium" aria-hidden="true">
-        <span class="stadium-light left"></span>
-        <span class="stadium-light right"></span>
-        <span class="field-line"></span>
-        <span class="field-circle"></span>
-      </div>
-      <div class="launch-content">
-        <img class="launch-logo" src="/assets/pickpro-logo-clean.png" alt="PickPro" />
+      <picture class="launch-art" aria-hidden="true">
+        <source media="(max-width: 720px)" srcset="/assets/pickpro-splash-mobile.png" />
+        <img src="/assets/pickpro-splash-desktop.png" alt="" decoding="async" />
+      </picture>
+      <div class="launch-content" aria-label="Pantalla inicial de PickPro">
         <div class="launch-action" id="launchAction">
           <div class="launch-loading">
             <span class="launch-spinner" aria-hidden="true"></span>
@@ -93,13 +90,13 @@
         <nav class="sport-tabs" id="sportTabs" aria-label="Filtros por deporte"></nav>
         <div class="parlay-shortcuts">
           <button class="parlay-shortcut" id="parlayShortcut" type="button">
-            <span>Parlay del dia - ver seleccion ganadora &rarr;</span>
+            <span>Parlay del dia</span>
           </button>
           <button class="parlay-shortcut" id="hitsShortcut" type="button">
             <span>Acertados de hoy</span>
           </button>
           <button class="parlay-shortcut" id="featuredShortcut" type="button">
-            <span>Picks destacados</span>
+            <span>Picks alta confianza</span>
           </button>
           <button class="parlay-shortcut" id="sourcesShortcut" type="button">
             <span>Fuentes de cuotas</span>
@@ -119,18 +116,12 @@
             </div>
             <div class="match-stack" id="upcomingMatches"></div>
 
-            <article class="predictions-card day-predictions">
-              <div class="predictions-header">
-                <div class="predictions-icon">
-                  <span aria-hidden="true">P</span>
-                </div>
-                <div>
-                  <h2>Predicciones del dia <span>IA</span></h2>
-                  <p>Senales generadas por IA</p>
-                </div>
-              </div>
-              <div class="predictions-list" id="dailyPredictionList"></div>
-            </article>
+            <div class="daily-prediction-entry">
+              <button class="parlay-shortcut daily-prediction-button" id="dailyPredictionShortcut" type="button">
+                <span>Predicciones del dia</span>
+              </button>
+              <div class="predictions-list visually-hidden" id="dailyPredictionList"></div>
+            </div>
 
             <article class="predictions-card conservative-card" id="parlayDailyCard">
               <div class="predictions-header">
@@ -153,7 +144,7 @@
               <div class="platform-grid" id="platformGrid"></div>
 
               <div class="section-title">
-                <h2><span aria-hidden="true">*</span> Picks destacados</h2>
+                <h2><span aria-hidden="true">*</span> Picks alta confianza</h2>
                 <button class="text-button" type="button" data-action="show-all">Ver todos <span aria-hidden="true">^</span></button>
               </div>
               <div class="featured-grid" id="featuredPicks"></div>

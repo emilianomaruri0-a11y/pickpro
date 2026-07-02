@@ -8,8 +8,42 @@ const password = document.querySelector("#password");
 const passwordField = document.querySelector("#passwordField");
 const passwordLabel = document.querySelector("#passwordLabel");
 const togglePassword = document.querySelector("#togglePassword");
+const authLaunchScreen = document.querySelector("#authLaunchScreen");
+const authLaunchAction = document.querySelector("#authLaunchAction");
 let mode = "login";
 let recoveryStep = "start";
+let existingSession = false;
+
+function setAuthLaunchReady() {
+  if (!authLaunchAction) return;
+  document.body.classList.add("launch-ready");
+  authLaunchAction.innerHTML = `
+    <button class="launch-start-button" id="authLaunchStartButton" type="button" aria-label="Comenzar">
+      <span class="launch-bolt" aria-hidden="true">+</span>
+      <strong>COMENZAR</strong>
+      <span aria-hidden="true">></span>
+    </button>`;
+  document.querySelector("#authLaunchStartButton")?.addEventListener("click", () => {
+    if (existingSession) {
+      window.location.href = "/";
+      return;
+    }
+    document.body.classList.add("auth-entered");
+    document.body.classList.remove("auth-booting");
+    authLaunchScreen?.setAttribute("aria-hidden", "true");
+  });
+}
+
+async function prepareAuthLaunch() {
+  try {
+    const response = await fetch("/api/me", { headers: { accept: "application/json" } });
+    existingSession = response.ok;
+  } catch {
+    existingSession = false;
+  } finally {
+    window.setTimeout(setAuthLaunchReady, 700);
+  }
+}
 
 function setMessage(text, kind = "info") {
   message.textContent = text;
@@ -112,3 +146,5 @@ form.addEventListener("submit", async (event) => {
     submit.disabled = false;
   }
 });
+
+prepareAuthLaunch();

@@ -3033,6 +3033,280 @@ body[data-app-view="sources"] .bottom-nav-shell {
   z-index: 4;
 }
 
+/* Final launch art, compact shortcuts and AI search fixes */
+.launch-art {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  overflow: hidden;
+  background: #000;
+}
+
+.launch-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+  filter: contrast(1.02) saturate(1.02);
+  transform: scale(1.002);
+}
+
+.launch-screen::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 50% 58%, rgba(255, 255, 255, 0.12), transparent 24%),
+    linear-gradient(110deg, transparent 0 38%, rgba(255, 255, 255, 0.08) 46%, transparent 54% 100%);
+  content: "";
+  mix-blend-mode: screen;
+  opacity: 0.44;
+  pointer-events: none;
+  transform: translateX(-18%);
+  animation: launchSheen 4.8s ease-in-out infinite;
+}
+
+.launch-stadium,
+.launch-logo {
+  display: none;
+}
+
+.launch-content {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  max-width: none;
+  animation: launchPanelIn 920ms cubic-bezier(0.2, 0.84, 0.2, 1) both;
+}
+
+.launch-action {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(48px, 9.2vh, 88px);
+  width: min(360px, 31vw);
+  min-width: 300px;
+  min-height: 72px;
+  transform: translateX(-50%);
+}
+
+.launch-loading {
+  min-width: min(330px, 78vw);
+  min-height: 72px;
+  padding: 10px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.56);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 18px 58px rgba(0, 0, 0, 0.62);
+}
+
+.launch-ready .launch-loading {
+  display: none;
+}
+
+.launch-start-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
+  opacity: 0.03;
+}
+
+.launch-start-button:focus-visible {
+  opacity: 1;
+  outline: 2px solid rgba(255, 255, 255, 0.82);
+  outline-offset: 4px;
+}
+
+.auth-body.auth-booting {
+  overflow: hidden;
+}
+
+.auth-body.auth-booting .auth-shell {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px) scale(0.985);
+}
+
+.auth-body.auth-entered .auth-shell {
+  opacity: 1;
+  transform: none;
+}
+
+.auth-body.auth-entered .auth-launch-screen {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.auth-shell {
+  transition:
+    opacity 360ms ease,
+    transform 360ms ease;
+}
+
+.sport-tabs {
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.sport-tabs button {
+  min-width: 112px;
+  min-height: 72px;
+  padding: 8px 16px;
+}
+
+.sport-tabs button img {
+  width: 68px;
+  height: 42px;
+}
+
+.parlay-shortcuts {
+  gap: 9px;
+  margin: -4px auto 16px;
+  max-width: 820px;
+}
+
+.parlay-shortcut {
+  min-width: 176px;
+  min-height: 44px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+
+.daily-prediction-entry {
+  display: grid;
+  place-items: center;
+  margin: 0 0 16px;
+}
+
+.daily-prediction-button {
+  min-width: 220px;
+}
+
+.ai-chat-form {
+  align-items: center;
+}
+
+.ai-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ai-photo-button {
+  flex: none;
+  overflow: visible;
+  background: rgba(255, 255, 255, 0.065);
+  color: #fff;
+}
+
+.ai-chat-form button[type="submit"] {
+  background: #fff;
+  color: #050505;
+}
+
+.ai-chat-form input[type="text"] {
+  position: relative;
+  z-index: 6;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+@media (max-width: 720px) {
+  .launch-art img {
+    object-position: center top;
+  }
+
+  .launch-action {
+    bottom: clamp(132px, 14.2vh, 170px);
+    width: min(410px, 47vw);
+    min-width: 220px;
+    min-height: 66px;
+  }
+
+  .launch-loading {
+    min-width: min(280px, 72vw);
+    min-height: 62px;
+  }
+
+  .launch-spinner {
+    width: 30px;
+    height: 30px;
+  }
+
+  .launch-start-button {
+    min-height: 66px;
+  }
+
+  .sport-tabs {
+    justify-content: center;
+    gap: 10px;
+  }
+
+  .sport-tabs button {
+    min-width: 96px;
+    min-height: 62px;
+    padding: 7px 14px;
+  }
+
+  .sport-tabs button img {
+    width: 58px;
+    height: 34px;
+  }
+
+  .parlay-shortcuts {
+    max-width: 360px;
+  }
+
+  .parlay-shortcut {
+    width: auto;
+    min-width: 142px;
+    min-height: 38px;
+    padding: 0 13px;
+    font-size: 11px;
+  }
+
+  .daily-prediction-button {
+    min-width: 176px;
+  }
+}
+
+@keyframes launchSheen {
+  0%,
+  34% {
+    opacity: 0.18;
+    transform: translateX(-28%);
+  }
+  58% {
+    opacity: 0.48;
+    transform: translateX(18%);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translateX(28%);
+  }
+}
+
+@keyframes launchPanelIn {
+  from {
+    filter: blur(8px);
+    opacity: 0;
+    transform: scale(1.03);
+  }
+  to {
+    filter: blur(0);
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes launchSpin {
   to {
     transform: rotate(360deg);

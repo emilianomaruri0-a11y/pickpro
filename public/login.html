@@ -16,7 +16,22 @@
     <link rel="stylesheet" href="/assets/styles.css" />
     <script defer src="/assets/auth.js"></script>
   </head>
-  <body class="auth-body">
+  <body class="auth-body auth-booting">
+    <section class="launch-screen auth-launch-screen" id="authLaunchScreen" aria-live="polite">
+      <picture class="launch-art" aria-hidden="true">
+        <source media="(max-width: 720px)" srcset="/assets/pickpro-splash-mobile.png" />
+        <img src="/assets/pickpro-splash-desktop.png" alt="" decoding="async" />
+      </picture>
+      <div class="launch-content" aria-label="Pantalla inicial de PickPro">
+        <div class="launch-action" id="authLaunchAction">
+          <div class="launch-loading">
+            <span class="launch-spinner" aria-hidden="true"></span>
+            <strong>Cargando...</strong>
+            <small>Preparando tus mejores picks</small>
+          </div>
+        </div>
+      </div>
+    </section>
     <main class="auth-shell">
       <section class="auth-card">
         <img class="auth-logo" src="/assets/pickpro-logo-clean.png" alt="PickPro" />
