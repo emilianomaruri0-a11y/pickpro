@@ -30,6 +30,7 @@ ODDS_REGIONS=us
 ODDS_MARKETS=h2h
 SPORT_KEYS=baseball_mlb,soccer_fifa_world_cup
 POLL_INTERVAL_MS=10800000
+SCORE_POLL_INTERVAL_MS=300000
 ```
 
 Con esta configuracion se consulta MLB y Copa Mundial, mercado ganador del juego y una region. En The Odds API normalmente eso equivale a 1 credito por liga consultada cuando hay datos disponibles; con 500 creditos gratis y refresco cada 3 horas queda cerca de 480 creditos al mes si ambas ligas devuelven eventos todo el mes.
@@ -45,11 +46,11 @@ Variables utiles:
 - `PORT`: puerto local, por defecto `4173`.
 - `POLL_INTERVAL_MS`: intervalo de consulta al proveedor, por defecto `10800000` con API para cuidar cuota gratis.
 - `LIVE_TICK_INTERVAL_MS`: intervalo del stream visual en la app, por defecto `1000`.
+- `SCORE_POLL_INTERVAL_MS`: refresco de marcadores oficiales para eventos en vivo o cercanos, por defecto `300000`.
 - `EVENT_CACHE_TTL_HOURS`: horas que conserva eventos recientes para marcarlos en vivo por horario aunque el proveedor ya no devuelva cuotas.
 - `SPORT_KEYS`: lista separada por comas de deportes/ligas soportadas por el proveedor.
 - `ODDS_REGIONS`: regiones de casas para The Odds API.
 - `ODDS_MARKETS`: mercados de cuotas, por defecto `h2h`; usa `h2h,spreads,totals` solo si tienes mas cuota.
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_BASE_URL`: activan inicio con Google real.
 - `SESSION_TTL_HOURS`: duracion de sesion.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_KV_TABLE`: guardan usuarios en Supabase para que las cuentas sobrevivan reinicios y despliegues en Render.
 

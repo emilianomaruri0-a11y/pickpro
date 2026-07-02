@@ -17,6 +17,10 @@
     <script defer src="/assets/app.js"></script>
   </head>
   <body>
+    <div class="pull-refresh" id="pullRefresh" aria-hidden="true">
+      <span></span>
+      <strong>Actualizar</strong>
+    </div>
     <div class="app-frame">
       <header class="app-header">
         <div class="brand">
@@ -200,6 +204,10 @@
       <nav class="bottom-nav" aria-label="Navegacion principal">
         <button class="active" type="button" data-view="home">
           Inicio
+        </button>
+        <button type="button" data-view="search">
+          <span class="nav-search-icon" aria-hidden="true"></span>
+          Buscar
         </button>
         <button type="button" data-view="profile">
           Perfil

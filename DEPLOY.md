@@ -58,13 +58,13 @@ Start Command: npm start
 
 ```env
 THE_ODDS_API_KEY=tu_clave
-APP_BASE_URL=https://TU_URL_DE_RENDER
 COOKIE_SECURE=true
 ODDS_REGIONS=us
 ODDS_MARKETS=h2h
 SPORT_KEYS=baseball_mlb,soccer_fifa_world_cup
 POLL_INTERVAL_MS=10800000
 LIVE_TICK_INTERVAL_MS=1000
+SCORE_POLL_INTERVAL_MS=300000
 EVENT_CACHE_TTL_HOURS=36
 SESSION_TTL_HOURS=12
 ```
@@ -88,13 +88,6 @@ create table if not exists public.pickpro_kv (
 ```
 
 Guarda `SUPABASE_SERVICE_ROLE_KEY` solo en Render. No la subas a GitHub ni la pegues en el frontend.
-
-7. Si luego conectas Google login, agrega tambien:
-
-```env
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-```
 
 ## Dominio propio
 

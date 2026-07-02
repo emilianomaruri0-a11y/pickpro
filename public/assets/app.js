@@ -9,6 +9,7 @@ const state = {
   view: "home",
   parlayOpen: false,
   profileHandleDirty: false,
+  aiMessages: [],
   payload: null,
   csrfToken: null,
   user: null,
@@ -45,6 +46,8 @@ const elements = {
   hitsPageContent: null,
   featuredPageContent: null,
   sourcesPageContent: null,
+  searchAiContent: null,
+  pullRefresh: document.querySelector("#pullRefresh"),
   logoutButton: document.querySelector("#logoutButton"),
   oddsFormat: document.querySelector("#oddsFormat"),
   saveSettings: document.querySelector("#saveSettings"),
@@ -115,10 +118,18 @@ function setupViews() {
   sourcesView.innerHTML = `<div id="sourcesPageContent"></div>`;
   main.appendChild(sourcesView);
 
+  const searchAiView = document.createElement("section");
+  searchAiView.id = "searchAiView";
+  searchAiView.className = "app-view page-view search-ai-view";
+  searchAiView.hidden = true;
+  searchAiView.innerHTML = `<div id="searchAiContent"></div>`;
+  main.appendChild(searchAiView);
+
   elements.dailyParlayContent = dailyParlayView.querySelector("#dailyParlayContent");
   elements.hitsPageContent = hitsView.querySelector("#hitsPageContent");
   elements.featuredPageContent = featuredView.querySelector("#featuredPageContent");
   elements.sourcesPageContent = sourcesView.querySelector("#sourcesPageContent");
+  elements.searchAiContent = searchAiView.querySelector("#searchAiContent");
 }
 
 setupViews();
@@ -136,6 +147,14 @@ const mexicanBooks = [
   { name: "Codere", subtitle: "Referencia Mexico", logo: "CO", book: "Codere" },
   { name: "Bet350", subtitle: "Referencia Mexico", logo: "B", book: "Bet350" }
 ];
+
+function selectedBookmaker() {
+  return mexicanBooks.find((book) => book.book === state.settings.bookmaker) || mexicanBooks[0];
+}
+
+function selectedBookmakerName() {
+  return selectedBookmaker().name;
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -174,6 +193,53 @@ function formatTime(value) {
     day: "2-digit",
     month: "short"
   }).format(new Date(value));
+}
+
+function elapsedGameMinutes(event) {
+  const startMs = new Date(event?.commenceTime).getTime();
+  if (!Number.isFinite(startMs)) return 0;
+  return Math.max(0, Math.floor((Date.now() - startMs) / 60000));
+}
+
+function liveClockText(event) {
+  if (event?.status !== "live") return "";
+  const minutes = elapsedGameMinutes(event);
+  if (event.sportKey?.includes("soccer")) {
+    if (minutes <= 45) return `1T ${Math.max(1, minutes)}'`;
+    if (minutes <= 60) return "Descanso";
+    const matchMinute = Math.min(90, Math.max(46, minutes - 15));
+    return matchMinute >= 90 ? "2T 90+'" : `2T ${matchMinute}'`;
+  }
+  if (event.sportKey?.includes("baseball")) {
+    const inning = Math.min(9, Math.max(1, Math.floor(minutes / 22) + 1));
+    const half = Math.floor((minutes % 22) / 11) === 0 ? "Alta" : "Baja";
+    return `${half} ${inning}a entrada`;
+  }
+  return `${minutes} min`;
+}
+
+function eventTimeHtml(event) {
+  if (event.status === "live") {
+    const clock = liveClockText(event);
+    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>En vivo${clock ? ` - ${escapeHtml(clock)}` : ""}</span>`;
+  }
+  const text = event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime);
+  return `<span>${escapeHtml(text)}</span>`;
+}
+
+function eventStatusLabel(event) {
+  if (event.status === "live") return "En vivo";
+  if (event.status === "final") return "Final";
+  return "Proximo";
+}
+
+function scoreSubline(event, pick) {
+  if (event.status === "live") {
+    const source = event.score ? "Marcador oficial" : "Esperando marcador oficial";
+    return `${liveClockText(event)} - ${source}`;
+  }
+  if (event.status === "final") return event.scoreSource || "Marcador final";
+  return `Prediccion: ${pick.label}`;
 }
 
 function slugify(value) {
@@ -257,6 +323,12 @@ function moneylineRows(event) {
           : best[row.key]?.bestBook || "Mejor disponible",
     selected: row.key === event.prediction.pick.key
   }));
+}
+
+function shortScoreValue(event, side) {
+  if (!event.score) return event.status === "upcoming" ? "-" : "0";
+  const value = side === "home" ? event.score.home : event.score.away;
+  return Number.isFinite(Number(value)) ? String(value) : "0";
 }
 
 function probabilityRows(event) {
@@ -480,41 +552,36 @@ function renderSportTabs() {
 
 function renderMatchCard(event) {
   const pick = event.prediction.pick;
-  const scoreText = event.score ? `${event.score.home} - ${event.score.away}` : "VS";
-  const statusLabel = event.status === "live" ? "EN VIVO" : event.status === "final" ? "FINAL" : "PROXIMO";
-  const timeText =
-    event.status === "live"
-      ? "En vivo"
-      : event.status === "final"
-        ? event.scoreSource || "Marcador final"
-        : formatTime(event.commenceTime);
   const meters = probabilityRows(event);
 
   return `
     <article class="match-card ${state.selectedId === event.id ? "selected" : ""}" data-event-id="${escapeHtml(event.id)}">
-      <div class="match-top">
-        <span>${escapeHtml(event.league)} - ${escapeHtml(statusLabel)}</span>
-        <span class="${event.status === "live" ? "live-label" : ""}">${escapeHtml(timeText)}</span>
-      </div>
-      <div class="match-center">
-        <div class="team home">
+      <div class="compact-score">
+        <span class="compact-league">${escapeHtml(event.league)}</span>
+        <div class="compact-team-row">
           <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
-          <strong>${escapeHtml(event.homeTeam)}</strong>
+          <span>${escapeHtml(event.homeTeam)}</span>
+          <strong>${escapeHtml(shortScoreValue(event, "home"))}</strong>
         </div>
-        <div class="score-box">
-          <strong>${escapeHtml(scoreText)}</strong>
-          <span>Prediccion: ${escapeHtml(pick.label)}</span>
-        </div>
-        <div class="team away">
+        <div class="compact-team-row">
           <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
-          <strong>${escapeHtml(event.awayTeam)}</strong>
+          <span>${escapeHtml(event.awayTeam)}</span>
+          <strong>${escapeHtml(shortScoreValue(event, "away"))}</strong>
+        </div>
+        <div class="compact-status-row">
+          ${eventTimeHtml(event)}
+          <span>${escapeHtml(event.status === "live" ? scoreSubline(event, pick) : formatTime(event.commenceTime))}</span>
         </div>
       </div>
-      <div class="probability-meter" aria-label="Probabilidades en tiempo real">
+      <div class="compact-probability" aria-label="Probabilidades en tiempo real">
+        <div class="compact-market-title">
+          <span>Probabilidades IA</span>
+          <strong>${escapeHtml(event.status === "live" ? liveClockText(event) : eventStatusLabel(event))}</strong>
+        </div>
         ${meters
           .map(
             (meter) => `
-          <div class="meter-row ${meter.key === pick.key ? "active" : ""}">
+          <div class="meter-row compact-meter-row ${meter.key === pick.key ? "active" : ""}">
             <div class="meter-head">
               <span>${escapeHtml(meter.label)}</span>
               <strong>${meter.percent}%</strong>
@@ -525,18 +592,7 @@ function renderMatchCard(event) {
           </div>`
           )
           .join("")}
-      </div>
-      <div class="odds-grid">
-        ${moneylineRows(event)
-          .map(
-            (row) => `
-          <button class="odds-button ${row.selected ? "selected" : ""}" type="button">
-            <span>${escapeHtml(row.label)}</span>
-            <strong>${row.odds ? formatOdds(row.odds) : "--"}</strong>
-            <small>${escapeHtml(row.book)}</small>
-          </button>`
-          )
-          .join("")}
+        <button class="compact-more" type="button">Ver mas &gt;</button>
       </div>
     </article>
   `;
@@ -715,6 +771,22 @@ function legOdds(event, index, confidence, preferredOdds = null) {
   return preferredOdds || derivedMarketOdds(event, index, confidence);
 }
 
+function withBookmakerLeg(event, leg, index) {
+  const bookmaker = selectedBookmaker();
+  if (bookmaker.book === "best") {
+    return {
+      ...leg,
+      book: leg.bestBook || event.prediction?.pick?.bestBook || "Mejor disponible"
+    };
+  }
+
+  return {
+    ...leg,
+    odds: adjustedBookOdds(leg.odds, bookmaker.book, `${leg.market}-${leg.selection}-${index}`, event.id),
+    book: `${bookmaker.name} ref.`
+  };
+}
+
 function parlayLegPool(event) {
   const pick = event.prediction.pick;
   const isMlb = event.sportKey === "baseball_mlb";
@@ -728,7 +800,8 @@ function parlayLegPool(event) {
       selection: `${pickSide} gana`,
       eventName,
       odds: legOdds(event, 0, baseConfidence, pick.bestOdds),
-      confidence: Math.round(baseConfidence)
+      confidence: Math.round(baseConfidence),
+      bestBook: pick.bestBook || "Mejor disponible"
     }
   ];
 
@@ -754,7 +827,8 @@ function parlayLegPool(event) {
         selection: item.selection,
         eventName,
         odds: legOdds(event, index + 1, confidence),
-        confidence
+        confidence,
+        bestBook: "Modelo IA"
       });
     });
     return pool;
@@ -782,7 +856,8 @@ function parlayLegPool(event) {
       selection: item.selection,
       eventName,
       odds: legOdds(event, index + 1, confidence),
-      confidence
+      confidence,
+      bestBook: "Modelo IA"
     });
   });
   return pool;
@@ -800,7 +875,10 @@ function chooseParlayLegs(event, maxLegs = 5) {
   const candidatePool = filteredPool.length >= 3 ? filteredPool : pool.slice(0, 3);
   const highConfidence = candidatePool.filter((leg) => leg.confidence >= 76).length;
   const targetCount = Math.min(maxLegs, highConfidence >= 5 ? 5 : highConfidence >= 4 ? 4 : 3, candidatePool.length);
-  return candidatePool.slice(0, targetCount).sort((a, b) => b.confidence - a.confidence);
+  return candidatePool
+    .slice(0, targetCount)
+    .sort((a, b) => b.confidence - a.confidence)
+    .map((leg, index) => withBookmakerLeg(event, leg, index));
 }
 
 function parlayLegForEvent(event, index) {
@@ -830,7 +908,7 @@ function buildParlayTicket(sportKey, label) {
   });
   const combined = legs.reduce((total, leg) => total * (leg.odds || 1), 1);
   const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length);
-  return { label, legs, combined, confidence };
+  return { label, legs, combined, confidence, bookName: selectedBookmakerName() };
 }
 
 function buildSingleEventParlay(event) {
@@ -842,7 +920,8 @@ function buildSingleEventParlay(event) {
     label: `${event.homeTeam} vs ${event.awayTeam}`,
     legs,
     combined,
-    confidence
+    confidence,
+    bookName: selectedBookmakerName()
   };
 }
 
@@ -851,7 +930,7 @@ function renderParlayTicket(ticket, extraClass = "") {
     <article class="parlay-ticket ${escapeHtml(extraClass)}">
       <div class="parlay-head">
         <span class="source-badge">${escapeHtml(ticket.label)}</span>
-        <strong>${ticket.legs.length} selecciones - ${ticket.confidence}% confianza IA</strong>
+        <strong>${ticket.legs.length} selecciones - ${ticket.confidence}% confianza IA - ${escapeHtml(ticket.bookName || selectedBookmakerName())}</strong>
       </div>
       ${ticket.legs
         .map(
@@ -860,7 +939,7 @@ function renderParlayTicket(ticket, extraClass = "") {
           <span class="check-dot"><span aria-hidden="true">v</span></span>
           <div>
             <strong>${escapeHtml(leg.market)} - ${escapeHtml(leg.selection)}</strong>
-            <span>${escapeHtml(leg.eventName)}</span>
+            <span>${escapeHtml(leg.eventName)} - ${escapeHtml(leg.book || ticket.bookName || selectedBookmakerName())}</span>
           </div>
           <em>${formatOdds(leg.odds)}</em>
         </div>`
@@ -913,7 +992,7 @@ function renderDailyParlayPage() {
     <section class="profile-hero daily-parlay-hero">
       <span class="ai-pill"><span class="live-dot"></span> Parlay del dia</span>
       <h1>Parlays generados por IA</h1>
-      <p>Combinaciones para Copa Mundial y MLB con mercados como Money Line, goles/carreras totales, ambos anotan, corners, run line, hits y ponches.</p>
+      <p>Combinaciones ajustadas a ${escapeHtml(selectedBookmakerName())} con mercados como Money Line, goles/carreras totales, ambos anotan, corners, run line, hits y ponches.</p>
     </section>
     <article class="predictions-card single-parlay-card">
       <div class="predictions-header">
@@ -948,7 +1027,7 @@ function actualOutcomeKey(event) {
 
 function isPredictionHit(event) {
   const actual = actualOutcomeKey(event);
-  return actual && actual === event.prediction?.pick?.key;
+  return actual && actual === event.prediction?.pick?.key && event.prediction?.pick?.confidence >= 72;
 }
 
 function resultLabel(event) {
@@ -978,15 +1057,18 @@ function buildSettledParlayHits() {
         selection: `${event.prediction.pick.label} acerto`,
         eventName: `${event.homeTeam} vs ${event.awayTeam}`,
         odds: event.prediction.pick.bestOdds || derivedMarketOdds(event, index),
-        confidence: event.prediction.pick.confidence
-      }));
+        confidence: event.prediction.pick.confidence,
+        bestBook: event.prediction.pick.bestBook || "Mejor disponible"
+      }))
+      .map((leg, index) => withBookmakerLeg(events[index], leg, index));
       const combined = legs.reduce((total, leg) => total * (leg.odds || 1), 1);
       const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length);
       return {
-        label: `${sport?.label || "Parlay"} acertado`,
+        label: `${sport?.label || "Parlay"} generado por IA ganador`,
         legs,
         combined,
-        confidence
+        confidence,
+        bookName: selectedBookmakerName()
       };
     })
     .filter(Boolean);
@@ -1044,7 +1126,7 @@ function renderHitsPage() {
         <div class="predictions-icon"><span aria-hidden="true">P</span></div>
         <div>
           <h2>Parlays acertados</h2>
-          <p>Se muestran cuando todas las selecciones del parlay ya quedaron confirmadas.</p>
+          <p>Parlays de alta probabilidad generados por IA y confirmados con marcador final.</p>
         </div>
       </div>
       <div class="predictions-list">
@@ -1100,6 +1182,128 @@ function renderSourcesPage() {
   document.querySelector("#sourcesBackButton")?.addEventListener("click", () => showView("home"));
 }
 
+function aiTargetEvents(question) {
+  const words = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 3);
+  const source = state.allEvents.length ? state.allEvents : state.events;
+  const matches = words.length
+    ? source.filter((event) => eventMatchesSearch(event, words.join(" ")))
+    : [];
+  const pool = matches.length ? matches : strictEvents();
+  return [...pool]
+    .sort((a, b) => {
+      const liveDelta = Number(b.status === "live") - Number(a.status === "live");
+      if (liveDelta) return liveDelta;
+      return (b.prediction?.pick?.confidence || 0) - (a.prediction?.pick?.confidence || 0);
+    })
+    .slice(0, 3);
+}
+
+function buildAiAdvice(question, imageName) {
+  const events = aiTargetEvents(question);
+  if (!events.length) {
+    return "No encontre partidos suficientes con esos datos. Prueba con el nombre de un equipo, liga o mercado.";
+  }
+
+  const lines = [];
+  if (imageName) {
+    lines.push(`Foto recibida: ${imageName}. La uso como referencia junto con los eventos disponibles.`);
+  }
+  lines.push("Lectura rapida de apoyo:");
+  events.forEach((event, index) => {
+    const pick = event.prediction.pick;
+    const liveText = event.status === "live" ? ` en vivo ${liveClockText(event)}` : "";
+    lines.push(
+      `${index + 1}. ${event.homeTeam} vs ${event.awayTeam}${liveText}: ${pick.label}, ${pick.confidence}% confianza, momio ${formatOdds(pick.bestOdds)}.`
+    );
+  });
+  lines.push("No lo tomes como garantia: si el momio baja mucho, si el marcador cambia o si te sientes presionado, mejor no entrar.");
+  return lines.join("\n");
+}
+
+function renderAiMessage(message) {
+  const text = escapeHtml(message.text).replace(/\n/g, "<br>");
+  return `
+    <div class="ai-message ${message.role === "user" ? "user" : "assistant"}">
+      ${message.imageUrl ? `<img class="ai-chat-thumb" src="${escapeHtml(message.imageUrl)}" alt="Foto enviada" />` : ""}
+      <p>${text}</p>
+    </div>`;
+}
+
+function renderSearchAiPage() {
+  if (!elements.searchAiContent) return;
+  const suggestions = strictEvents().slice(0, 3);
+  elements.searchAiContent.innerHTML = `
+    <div class="detail-actions">
+      <button class="text-button detail-back" id="searchBackButton" type="button">Volver a inicio</button>
+      <span class="source-badge">IA de apoyo</span>
+    </div>
+    <section class="profile-hero page-hero">
+      <span class="ai-pill"><span class="live-dot"></span> Busqueda IA</span>
+      <h1>Consulta picks y fotos</h1>
+      <p>Escribe una duda o adjunta una captura para recibir una lectura directa con los partidos disponibles.</p>
+    </section>
+    <article class="ai-chat-card">
+      <div class="ai-chat-messages" id="aiChatMessages">
+        ${
+          state.aiMessages.length
+            ? state.aiMessages.map(renderAiMessage).join("")
+            : `
+              <div class="ai-message assistant">
+                <p>${escapeHtml(
+                  suggestions.length
+                    ? `Puedo revisar contigo ${suggestions.map((event) => `${event.homeTeam} vs ${event.awayTeam}`).join(", ")}.`
+                    : "Puedo revisar contigo los partidos cuando carguen los datos."
+                )}</p>
+              </div>`
+        }
+      </div>
+      <form class="ai-chat-form" id="aiChatForm">
+        <label class="ai-photo-button">
+          <input id="aiPhotoInput" type="file" accept="image/*" />
+          <span class="nav-search-icon" aria-hidden="true"></span>
+          Foto
+        </label>
+        <input id="aiQuestionInput" name="question" autocomplete="off" placeholder="Escribe equipo, partido o duda..." />
+        <button type="submit">Enviar</button>
+      </form>
+      <p class="ai-photo-name" id="aiPhotoName"></p>
+    </article>`;
+
+  const photoInput = elements.searchAiContent.querySelector("#aiPhotoInput");
+  const photoName = elements.searchAiContent.querySelector("#aiPhotoName");
+  photoInput?.addEventListener("change", () => {
+    const file = photoInput.files?.[0];
+    photoName.textContent = file ? `Foto lista: ${file.name}` : "";
+  });
+
+  elements.searchAiContent.querySelector("#aiChatForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const questionInput = elements.searchAiContent.querySelector("#aiQuestionInput");
+    const question = questionInput.value.trim();
+    const file = photoInput?.files?.[0] || null;
+    if (!question && !file) return;
+    const imageUrl = file ? URL.createObjectURL(file) : "";
+    state.aiMessages.push({
+      role: "user",
+      text: question || "Analiza esta captura.",
+      imageUrl
+    });
+    state.aiMessages.push({
+      role: "assistant",
+      text: buildAiAdvice(question, file?.name || "")
+    });
+    renderSearchAiPage();
+  });
+
+  document.querySelector("#searchBackButton")?.addEventListener("click", () => showView("home"));
+}
+
 function renderMatchDetail() {
   const detailView = document.querySelector("#matchDetailView");
   const detailContent = document.querySelector("#matchDetailContent");
@@ -1125,8 +1329,8 @@ function renderMatchDetail() {
 
     <article class="match-detail-card">
       <div class="match-top">
-        <span>${escapeHtml(event.league)} - ${escapeHtml(event.status === "live" ? "EN VIVO" : "PROXIMO")}</span>
-        <span>${escapeHtml(event.status === "live" ? "En vivo" : event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime))}</span>
+        <span>${escapeHtml(event.league)} - ${escapeHtml(eventStatusLabel(event))}</span>
+        ${eventTimeHtml(event)}
       </div>
       <div class="detail-match-grid">
         <div class="team">
@@ -1135,7 +1339,8 @@ function renderMatchDetail() {
         </div>
         <div class="score-box">
           <strong>${escapeHtml(scoreText)}</strong>
-          <span>Prediccion IA: ${escapeHtml(pick.label)}</span>
+          <span>${escapeHtml(scoreSubline(event, pick))}</span>
+          <small>Prediccion IA: ${escapeHtml(pick.label)}</small>
         </div>
         <div class="team">
           <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
@@ -1184,7 +1389,7 @@ function renderAnalysis() {
   elements.analysisCard.innerHTML = `
     <h2>Analisis IA</h2>
     <p class="analysis-pick">${escapeHtml(pick.label)} - ${formatPercent(pick.probability)}</p>
-    <p>${escapeHtml(event.league)} - ${escapeHtml(event.dataSource)} - ${formatTime(event.commenceTime)}</p>
+    <p>${escapeHtml(event.league)} - ${escapeHtml(event.dataSource)} - ${escapeHtml(event.status === "live" ? liveClockText(event) : formatTime(event.commenceTime))}</p>
     <div class="analysis-grid">
       <div>
         <span>Confianza</span>
@@ -1238,7 +1443,8 @@ function showView(view) {
   const hitsView = document.querySelector("#hitsView");
   const featuredView = document.querySelector("#featuredView");
   const sourcesView = document.querySelector("#sourcesView");
-  if (!homeView || !profileView || !matchDetailView || !dailyParlayView || !hitsView || !featuredView || !sourcesView) return;
+  const searchAiView = document.querySelector("#searchAiView");
+  if (!homeView || !profileView || !matchDetailView || !dailyParlayView || !hitsView || !featuredView || !sourcesView || !searchAiView) return;
 
   homeView.hidden = view !== "home";
   profileView.hidden = view !== "profile";
@@ -1247,11 +1453,9 @@ function showView(view) {
   hitsView.hidden = view !== "hits";
   featuredView.hidden = view !== "featured";
   sourcesView.hidden = view !== "sources";
+  searchAiView.hidden = view !== "search";
   document.querySelectorAll(".bottom-nav button").forEach((button) => {
-    const isActive =
-      (view === "profile" && button.dataset.view === "profile") ||
-      (view === "home" && button.textContent.trim().includes("Inicio"));
-    button.classList.toggle("active", isActive);
+    button.classList.toggle("active", button.dataset.view === view);
   });
   elements.parlayShortcut?.classList.toggle("active", view === "parlay");
   elements.hitsShortcut?.classList.toggle("active", view === "hits");
@@ -1261,12 +1465,14 @@ function showView(view) {
   if (view === "hits") renderHitsPage();
   if (view === "featured") renderFeaturedPage();
   if (view === "sources") renderSourcesPage();
+  if (view === "search") renderSearchAiPage();
   if (view === "profile") renderProfile();
   const hashMap = {
     parlay: "#/parlay-del-dia",
     hits: "#/acertados-de-hoy",
     featured: "#/picks-destacados",
-    sources: "#/fuentes-de-cuotas"
+    sources: "#/fuentes-de-cuotas",
+    search: "#/busqueda-ia"
   };
   if (hashMap[view] && location.hash !== hashMap[view]) {
     history.pushState(null, "", hashMap[view]);
@@ -1293,6 +1499,10 @@ function routeFromHash() {
   }
   if (hash === "#/fuentes-de-cuotas") {
     showView("sources");
+    return;
+  }
+  if (hash === "#/busqueda-ia") {
+    showView("search");
     return;
   }
   if (hash.startsWith("#/partido/")) {
@@ -1377,6 +1587,7 @@ function render() {
   if (state.view === "hits") renderHitsPage();
   if (state.view === "featured") renderFeaturedPage();
   if (state.view === "sources") renderSourcesPage();
+  if (state.view === "search") renderSearchAiPage();
   renderAnalysis();
   if (state.view === "match") renderMatchDetail();
   renderProfile();
@@ -1392,6 +1603,76 @@ function setupStream() {
   stream.addEventListener("snapshot", (event) => applyPayload(JSON.parse(event.data)));
   stream.addEventListener("error", () => {
     elements.feedMode.textContent = "Reconectando";
+  });
+}
+
+function setupPullToRefresh() {
+  const indicator = elements.pullRefresh;
+  if (!indicator || !("ontouchstart" in window)) return;
+
+  let startY = 0;
+  let distance = 0;
+  let pulling = false;
+  let refreshing = false;
+  const threshold = 78;
+
+  const setIndicator = (nextDistance, mode = "") => {
+    const visibleDistance = Math.min(nextDistance, 112);
+    indicator.classList.toggle("visible", visibleDistance > 8 || Boolean(mode));
+    indicator.classList.toggle("ready", visibleDistance >= threshold && !refreshing);
+    indicator.classList.toggle("loading", mode === "loading");
+    indicator.style.setProperty("--pull-distance", `${Math.max(0, visibleDistance)}px`);
+    indicator.querySelector("strong").textContent =
+      mode === "loading" ? "Actualizando" : visibleDistance >= threshold ? "Suelta para actualizar" : "Actualizar";
+  };
+
+  window.addEventListener(
+    "touchstart",
+    (event) => {
+      if (refreshing || event.touches.length !== 1 || window.scrollY > 0) return;
+      startY = event.touches[0].clientY;
+      distance = 0;
+      pulling = true;
+    },
+    { passive: true }
+  );
+
+  window.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!pulling || refreshing) return;
+      const currentY = event.touches[0].clientY;
+      distance = Math.max(0, currentY - startY);
+      if (distance > 4 && window.scrollY <= 0) {
+        event.preventDefault();
+        setIndicator(distance);
+      }
+    },
+    { passive: false }
+  );
+
+  window.addEventListener("touchend", async () => {
+    if (!pulling || refreshing) return;
+    pulling = false;
+    if (distance < threshold) {
+      setIndicator(0);
+      return;
+    }
+
+    refreshing = true;
+    setIndicator(threshold, "loading");
+    try {
+      await fetchEvents();
+      indicator.querySelector("strong").textContent = "Actualizado";
+      setTimeout(() => setIndicator(0), 500);
+    } catch {
+      indicator.querySelector("strong").textContent = "No se pudo actualizar";
+      setTimeout(() => setIndicator(0), 900);
+    } finally {
+      setTimeout(() => {
+        refreshing = false;
+      }, 520);
+    }
   });
 }
 
@@ -1467,6 +1748,7 @@ function bindEvents() {
     });
   });
   window.addEventListener("popstate", routeFromHash);
+  setupPullToRefresh();
 }
 
 async function init() {

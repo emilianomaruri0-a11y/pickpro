@@ -30,7 +30,6 @@ function setMode(nextMode) {
   setVisible(".login-only", mode === "login");
   setVisible(".recover-only", mode === "recover");
   setVisible(".recover-code-only", false);
-  document.querySelector(".oauth-grid").hidden = mode !== "login";
   passwordField.hidden = mode === "recover";
   passwordLabel.textContent = mode === "recover" ? "Nueva contrasena" : "Contrasena";
   submit.textContent = mode === "register" ? "Crear cuenta" : mode === "recover" ? "Enviar codigo" : "Entrar";
@@ -112,19 +111,4 @@ form.addEventListener("submit", async (event) => {
   } finally {
     submit.disabled = false;
   }
-});
-
-document.querySelectorAll("[data-provider]").forEach((button) => {
-  button.addEventListener("click", async () => {
-    const provider = button.dataset.provider;
-    setMessage(`Conectando con ${provider}...`);
-    try {
-      const response = await fetch(`/api/oauth/${provider}/start`, { method: "POST" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(`${data.error} ${data.required ? "Falta: " + data.required.join(", ") : ""}`);
-      if (data.redirectUrl) window.location.href = data.redirectUrl;
-    } catch (error) {
-      setMessage(error.message, "error");
-    }
-  });
 });

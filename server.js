@@ -42,6 +42,7 @@ const SPORT_KEYS = (
   .filter(Boolean);
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || (ODDS_API_KEY ? 10800000 : 1000));
 const LIVE_TICK_INTERVAL_MS = Number(process.env.LIVE_TICK_INTERVAL_MS || 1000);
+const SCORE_POLL_INTERVAL_MS = Number(process.env.SCORE_POLL_INTERVAL_MS || 300000);
 const EVENT_CACHE_TTL_MS = Number(process.env.EVENT_CACHE_TTL_HOURS || 36) * 60 * 60 * 1000;
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 12) * 60 * 60 * 1000;
 const ALLOW_SIGNUPS = process.env.ALLOW_SIGNUPS !== "false";
@@ -56,10 +57,10 @@ const clients = new Set();
 const eventCache = new Map();
 const sessions = new Map();
 const authAttempts = new Map();
-const oauthStates = new Map();
 const recoveryCodes = new Map();
 
 let users = [];
+let scoreRefreshInFlight = false;
 
 let feedState = {
   events: [],
@@ -91,7 +92,7 @@ function securityHeaders(extra = {}) {
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "cross-origin-opener-policy": "same-origin",
     "content-security-policy":
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     ...extra
   };
 }
@@ -274,7 +275,7 @@ function userPublicProfile(user) {
     email: user.email,
     phone: user.phone,
     username: user.handle || user.email || user.phone,
-    password: user.passwordHash ? "********" : "Google",
+    password: user.passwordHash ? "********" : "No configurada",
     providers: user.providers,
     settings: user.settings
   };
@@ -667,43 +668,6 @@ async function updateProfile(request, response, session) {
   session.username = handle;
   await saveUsers();
   sendJson(response, 200, { ok: true, user: userPublicProfile(user) });
-}
-
-function oauthConfigured(provider) {
-  return provider === "google" && Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.APP_BASE_URL);
-}
-
-function oauthConfigurationMessage(provider) {
-  const common = ["APP_BASE_URL=https://tu-dominio.com"];
-
-  return {
-    error: "Google todavia no esta configurado.",
-    detail:
-      "El boton ya esta preparado, pero el inicio real requiere credenciales oficiales, dominio HTTPS y URL de retorno registrada.",
-    required: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", ...common]
-  };
-}
-
-function startOAuth(request, response, provider) {
-  if (!oauthConfigured(provider)) {
-    sendJson(response, 501, oauthConfigurationMessage(provider));
-    return;
-  }
-
-  const state = crypto.randomBytes(24).toString("base64url");
-  oauthStates.set(state, { provider, createdAt: Date.now(), ip: requestIp(request) });
-
-  if (provider === "google") {
-    const callbackUrl = new URL("/auth/google/callback", process.env.APP_BASE_URL).toString();
-    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    url.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
-    url.searchParams.set("redirect_uri", callbackUrl);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid email profile");
-    url.searchParams.set("state", state);
-    url.searchParams.set("prompt", "select_account");
-    sendJson(response, 200, { redirectUrl: url.toString() });
-  }
 }
 
 const DEMO_EVENTS = [
@@ -1348,18 +1312,28 @@ function bestDecimalOdds(event, keys) {
 
 function buildStatProbabilities(event, keys) {
   const stats = event.stats || {};
+  const homeContext =
+    (event.sportKey || "").includes("baseball") ? 0.035 : (event.sportKey || "").includes("soccer") ? 0.055 : 0.045;
+  const matchupTilt = (hashString(`${event.id}-${event.homeTeam}-${event.awayTeam}-matchup`) % 1000) / 1000 - 0.5;
+  const scheduleTilt = (hashString(`${event.commenceTime}-${event.league}`) % 1000) / 1000 - 0.5;
   const homeStrength =
     (stats.homeForm || 0.5) * 1.4 +
     (stats.homeAttack || 0.5) * 1.15 +
     (stats.homeDefense || 0.5) * 0.85 -
     (stats.homeInjuryImpact || 0) * 1.1 +
-    (stats.restEdge || 0) * 1.4;
+    (stats.restEdge || 0) * 1.4 +
+    homeContext +
+    matchupTilt * 0.16 +
+    scheduleTilt * 0.06;
   const awayStrength =
     (stats.awayForm || 0.5) * 1.4 +
     (stats.awayAttack || 0.5) * 1.15 +
     (stats.awayDefense || 0.5) * 0.85 -
     (stats.awayInjuryImpact || 0) * 1.1 -
-    (stats.restEdge || 0) * 1.4;
+    (stats.restEdge || 0) * 1.4 -
+    homeContext * 0.62 -
+    matchupTilt * 0.16 -
+    scheduleTilt * 0.06;
 
   const scores = [
     { key: "home", score: homeStrength },
@@ -1372,6 +1346,49 @@ function buildStatProbabilities(event, keys) {
   }
 
   return softmax(scores);
+}
+
+function normalizeProbabilityMap(map, keys) {
+  const raw = {};
+  keys.forEach((key) => {
+    raw[key] = Math.max(0, Number(map?.[key]) || 0);
+  });
+  const total = Object.values(raw).reduce((sum, value) => sum + value, 0) || 1;
+  keys.forEach((key) => {
+    raw[key] = raw[key] / total;
+  });
+  return raw;
+}
+
+function elapsedMinutes(event) {
+  const startMs = new Date(event?.commenceTime).getTime();
+  if (!Number.isFinite(startMs)) return 0;
+  return Math.max(0, Math.floor((Date.now() - startMs) / 60000));
+}
+
+function buildLiveScoreProbabilities(event, keys) {
+  if (event.status !== "live" || !event.score) return null;
+  const homeScore = Number(event.score.home);
+  const awayScore = Number(event.score.away);
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return null;
+
+  const lead = homeScore - awayScore;
+  const minutes = elapsedMinutes(event);
+  const isSoccer = (event.sportKey || "").includes("soccer");
+  const isBaseball = (event.sportKey || "").includes("baseball");
+  const progress = isSoccer ? clamp(minutes / 95, 0.08, 0.96) : isBaseball ? clamp(minutes / 190, 0.08, 0.92) : 0.45;
+  const leadPressure = clamp(Math.abs(lead) * (isSoccer ? 0.28 : 0.17) * progress, 0, 0.34);
+  const scores = [
+    { key: "home", score: 1 + (lead > 0 ? leadPressure : -leadPressure) + (lead === 0 ? 0.03 : 0) },
+    { key: "away", score: 1 + (lead < 0 ? leadPressure : -leadPressure) }
+  ];
+
+  if (keys.includes("draw")) {
+    const drawBase = lead === 0 ? 1.12 + progress * 0.22 : 0.88 - leadPressure * 1.2;
+    scores.push({ key: "draw", score: drawBase });
+  }
+
+  return softmax(scores.filter((item) => keys.includes(item.key)));
 }
 
 function buildTrend(event, winnerKey, probability) {
@@ -1408,6 +1425,7 @@ function buildReasons(event, pickKey, modelProbabilities, marketProbabilities) {
   if (pickKey === "away" && injuryGap < -0.03) reasons.push(`${event.homeTeam} carga mayor impacto por ausencias.`);
   if (pickKey === "draw") reasons.push("El mercado y los indicadores internos muestran fuerzas parejas.");
   if (marketGap > 0.025) reasons.push(`El modelo ve mas valor que el consenso en ${pickedTeam}.`);
+  if (event.status === "live" && event.score) reasons.push("El marcador en vivo y el tiempo de juego recalibran la probabilidad.");
   if ((stats.volatility || 0) > 0.2) reasons.push("Movimiento de cuota elevado: conviene vigilar cambios antes de tomar decisiones.");
   if (!reasons.length) reasons.push("La ventaja existe, pero el margen frente al mercado es estrecho.");
 
@@ -1417,22 +1435,25 @@ function buildReasons(event, pickKey, modelProbabilities, marketProbabilities) {
 function calculatePrediction(event) {
   const { probabilities: marketProbabilities, keys, rows } = averageMarketProbabilities(event);
   const statProbabilities = buildStatProbabilities(event, keys);
+  const liveScoreProbabilities = buildLiveScoreProbabilities(event, keys);
   const bestOdds = bestDecimalOdds(event, keys);
   const marketDepth = clamp(event.stats?.marketDepth ?? rows.length / 5, 0.35, 0.95);
   const volatility = clamp(event.stats?.volatility ?? standardDeviation(rows.flatMap((row) => keys.map((key) => row[key]).filter(Boolean))) / 10, 0.05, 0.45);
-  const marketWeight = clamp(0.58 + marketDepth * 0.28 - volatility * 0.18, 0.52, 0.82);
+  const liveWeight = liveScoreProbabilities ? clamp(0.2 + elapsedMinutes(event) / 420, 0.2, 0.38) : 0;
+  const marketWeight = clamp(0.38 + marketDepth * 0.22 - volatility * 0.22 - liveWeight * 0.26, 0.32, 0.62);
+  const statWeight = clamp(1 - marketWeight - liveWeight, 0.2, 0.58);
   const modelProbabilities = {};
 
   keys.forEach((key) => {
-    modelProbabilities[key] = round(
-      marketProbabilities[key] * marketWeight + (statProbabilities[key] || 0) * (1 - marketWeight),
-      4
-    );
+    modelProbabilities[key] =
+      (marketProbabilities[key] || 0) * marketWeight +
+      (statProbabilities[key] || 0) * statWeight +
+      (liveScoreProbabilities?.[key] || 0) * liveWeight;
   });
 
-  const total = Object.values(modelProbabilities).reduce((sum, value) => sum + value, 0) || 1;
+  Object.assign(modelProbabilities, normalizeProbabilityMap(modelProbabilities, keys));
   keys.forEach((key) => {
-    modelProbabilities[key] = round(modelProbabilities[key] / total, 4);
+    modelProbabilities[key] = round(modelProbabilities[key], 4);
   });
 
   const outcomeRows = keys.map((key) => {
@@ -1464,7 +1485,23 @@ function calculatePrediction(event) {
   const liveWithoutScorePenalty = event.status === "live" && !event.score ? 6 : 0;
   const volatilityPenalty = volatility > 0.3 ? 7 : volatility > 0.22 ? 3 : 0;
   const probabilityFloor = keys.includes("draw") ? 0.36 : 0.52;
-  const rawConfidence = 52 + leadGap * 80 + marketDepth * 20 + agreement * 10 - volatility * 26 + Math.max(0, pick.edge) * 95;
+  const modelMarketAgreement =
+    1 -
+    mean(keys.map((key) => Math.abs((modelProbabilities[key] || 0) - (marketProbabilities[key] || 0)))) /
+      (keys.includes("draw") ? 0.32 : 0.24);
+  const statMarketAgreement =
+    1 -
+    mean(keys.map((key) => Math.abs((statProbabilities[key] || 0) - (marketProbabilities[key] || 0)))) /
+      (keys.includes("draw") ? 0.36 : 0.28);
+  const blendedAgreement = clamp((agreement + modelMarketAgreement + statMarketAgreement) / 3, 0.22, 1);
+  const rawConfidence =
+    50 +
+    leadGap * 92 +
+    marketDepth * 16 +
+    blendedAgreement * 16 -
+    volatility * 30 +
+    Math.max(0, pick.edge) * 78 +
+    liveWeight * 10;
   const confidence = Math.round(
     clamp(rawConfidence - samplePenalty - liveWithoutScorePenalty - volatilityPenalty, 42, 92)
   );
@@ -1509,6 +1546,8 @@ function calculatePrediction(event) {
       marketWeight: round(marketWeight, 3),
       dataQuality: round(marketDepth, 3),
       volatility: round(volatility, 3),
+      statWeight: round(statWeight, 3),
+      liveWeight: round(liveWeight, 3),
       generatedAt: nowIso(),
       cap: 0.88
     }
@@ -1619,14 +1658,25 @@ function estimateStatsFromOdds(event, sportKey) {
   };
 }
 
+function normalizeScoreName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function scoreKey(homeTeam, awayTeam) {
-  return `${String(homeTeam || "").toLowerCase()}|||${String(awayTeam || "").toLowerCase()}`;
+  return `${normalizeScoreName(homeTeam)}|||${normalizeScoreName(awayTeam)}`;
 }
 
 function scoreFromProvider(item) {
   const scores = Array.isArray(item.scores) ? item.scores : [];
-  const homeScore = scores.find((score) => String(score.name || "").toLowerCase() === String(item.home_team || "").toLowerCase());
-  const awayScore = scores.find((score) => String(score.name || "").toLowerCase() === String(item.away_team || "").toLowerCase());
+  const homeName = normalizeScoreName(item.home_team);
+  const awayName = normalizeScoreName(item.away_team);
+  const homeScore = scores.find((score) => normalizeScoreName(score.name) === homeName);
+  const awayScore = scores.find((score) => normalizeScoreName(score.name) === awayName);
   if (!homeScore || !awayScore) return null;
   const home = Number(homeScore.score);
   const away = Number(awayScore.score);
@@ -1648,7 +1698,8 @@ async function fetchScoresForSport(sportKey) {
   (Array.isArray(data) ? data : []).forEach((item) => {
     scores.set(scoreKey(item.home_team, item.away_team), {
       score: scoreFromProvider(item),
-      completed: Boolean(item.completed)
+      completed: Boolean(item.completed),
+      lastUpdate: item.last_update || item.lastUpdate || null
     });
   });
   return scores;
@@ -1725,6 +1776,7 @@ function transformOddsApiEvent(item, sportKey, scoreInfo = null) {
     commenceTime: item.commence_time,
     score: scoreInfo?.score || null,
     scoreSource: scoreInfo?.score ? "Marcador oficial del proveedor" : "",
+    scoreUpdatedAt: scoreInfo?.lastUpdate || null,
     dataSource: "The Odds API",
     isDemo: false,
     markets: {
@@ -1857,6 +1909,71 @@ async function refreshFeed(reason = "schedule") {
   broadcastSnapshot();
 }
 
+function isInsideScoreWindow(event, now = Date.now()) {
+  const startMs = new Date(event.commenceTime).getTime();
+  if (!Number.isFinite(startMs)) return false;
+  const pregameWindow = 20 * 60 * 1000;
+  const postgameWindow = 45 * 60 * 1000;
+  return now >= startMs - pregameWindow && now <= startMs + liveWindowMsForSport(event.sportKey) + postgameWindow;
+}
+
+function activeScoreSports() {
+  return [
+    ...new Set(
+      feedState.events
+        .filter((event) => event.sportKey && isInsideScoreWindow(event))
+        .map((event) => event.sportKey)
+    )
+  ];
+}
+
+function applyScoreInfoToEvent(event, scoreInfo) {
+  if (!scoreInfo) return normalizeRuntimeEvent(event);
+  const score = scoreInfo.score || event.score || null;
+  return normalizeRuntimeEvent({
+    ...event,
+    score,
+    scoreSource: score ? "Marcador oficial del proveedor" : event.scoreSource,
+    scoreUpdatedAt: scoreInfo.lastUpdate || nowIso(),
+    status: scoreInfo.completed ? "final" : event.status
+  });
+}
+
+async function refreshLiveScores(reason = "score") {
+  if (!ODDS_API_KEY || scoreRefreshInFlight || !feedState.events.length) return;
+  const sportKeys = activeScoreSports();
+  if (!sportKeys.length) return;
+
+  scoreRefreshInFlight = true;
+  try {
+    const scoreMaps = new Map();
+    for (const sportKey of sportKeys) {
+      scoreMaps.set(sportKey, await fetchScoresForSport(sportKey));
+    }
+
+    const updatedEvents = feedState.events.map((event) => {
+      const scoreInfo = scoreMaps.get(event.sportKey)?.get(scoreKey(event.homeTeam, event.awayTeam));
+      return applyScoreInfoToEvent(event, scoreInfo);
+    });
+    const enrichedEvents = enrichEvents(normalizeRuntimeEvents(updatedEvents));
+    enrichedEvents.forEach((event) => eventCache.set(eventCacheKey(event), event));
+
+    feedState = {
+      ...feedState,
+      events: enrichedEvents,
+      lastRefreshAt: nowIso(),
+      nextRefreshAt: new Date(Date.now() + LIVE_TICK_INTERVAL_MS).toISOString(),
+      reason,
+      scoreRefreshAt: nowIso()
+    };
+    broadcastSnapshot();
+  } catch (error) {
+    feedState.providerErrors = [...(feedState.providerErrors || []), `scores: ${error.message}`].slice(-6);
+  } finally {
+    scoreRefreshInFlight = false;
+  }
+}
+
 function filterEvents(searchParams) {
   const query = (searchParams.get("q") || "").trim().toLowerCase();
   const sport = (searchParams.get("sport") || "all").trim();
@@ -1970,94 +2087,6 @@ async function serveStatic(requestUrl, response) {
   }
 }
 
-async function completeGoogleOAuth(requestUrl, response) {
-  const code = requestUrl.searchParams.get("code");
-  const state = requestUrl.searchParams.get("state");
-  const storedState = oauthStates.get(state);
-  oauthStates.delete(state);
-
-  if (!code || !storedState || storedState.provider !== "google" || Date.now() - storedState.createdAt > 10 * 60 * 1000) {
-    sendRedirect(response, "/login?error=oauth_state");
-    return;
-  }
-
-  const callbackUrl = new URL("/auth/google/callback", process.env.APP_BASE_URL).toString();
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: callbackUrl,
-      grant_type: "authorization_code"
-    })
-  });
-
-  if (!tokenResponse.ok) {
-    sendRedirect(response, "/login?error=oauth_token");
-    return;
-  }
-
-  const tokenPayload = await tokenResponse.json();
-  const tokenInfoResponse = await fetch(
-    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(tokenPayload.id_token)}`
-  );
-  if (!tokenInfoResponse.ok) {
-    sendRedirect(response, "/login?error=oauth_verify");
-    return;
-  }
-
-  const tokenInfo = await tokenInfoResponse.json();
-  if (tokenInfo.aud !== process.env.GOOGLE_CLIENT_ID || tokenInfo.email_verified !== "true") {
-    sendRedirect(response, "/login?error=oauth_invalid");
-    return;
-  }
-
-  const username = normalizeUsername(tokenInfo.email);
-  let user = users.find((item) => item.email === username || item.username === username);
-  if (!user) {
-    const baseHandle = normalizeHandle(username.split("@")[0]) || `google_${crypto.randomUUID().slice(0, 8)}`;
-    let handle = baseHandle;
-    let suffix = 1;
-    while (users.some((item) => item.handle === handle)) {
-      suffix += 1;
-      handle = `${baseHandle}_${suffix}`;
-    }
-    user = {
-      id: crypto.randomUUID(),
-      username,
-      email: username,
-      phone: "",
-      handle,
-      contactType: "email",
-      firstNames: tokenInfo.given_name || tokenInfo.name || "Usuario",
-      lastNames: tokenInfo.family_name || "",
-      displayName: tokenInfo.name || username,
-      passwordHash: null,
-      providers: ["google"],
-      settings: { oddsFormat: "decimal", theme: "dark", bookmaker: "best" },
-      createdAt: nowIso()
-    };
-    users.push(user);
-  } else if (!user.providers.includes("google")) {
-    user.providers.push("google");
-  }
-  user.lastLoginAt = nowIso();
-  await saveUsers();
-
-  const session = createSession(user);
-  response.writeHead(
-    302,
-    securityHeaders({
-      location: "/",
-      "cache-control": "no-store",
-      "set-cookie": sessionCookie(session.token, Math.floor(SESSION_TTL_MS / 1000))
-    })
-  );
-  response.end();
-}
-
 async function handleRequest(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
 
@@ -2137,16 +2166,6 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.method === "POST" && requestUrl.pathname === "/api/oauth/google/start") {
-    startOAuth(request, response, "google");
-    return;
-  }
-
-  if (request.method === "GET" && requestUrl.pathname === "/auth/google/callback") {
-    await completeGoogleOAuth(requestUrl, response);
-    return;
-  }
-
   if (request.method === "GET" && requestUrl.pathname === "/api/events") {
     if (!requireAuth(request, response)) return;
     sendJson(response, 200, buildPayload(filterEvents(requestUrl.searchParams)));
@@ -2163,6 +2182,7 @@ async function handleRequest(request, response) {
       nextRefreshAt: feedState.nextRefreshAt,
       refreshCount: feedState.refreshCount,
       pollIntervalMs: POLL_INTERVAL_MS,
+      scorePollIntervalMs: SCORE_POLL_INTERVAL_MS,
       quota: feedState.quota,
       hasLiveKey: Boolean(ODDS_API_KEY)
     });
@@ -2216,6 +2236,7 @@ ensureDataStore()
   .then(() => refreshFeed("startup"))
   .then(() => {
     setInterval(() => refreshFeed("schedule").catch((error) => console.error(error)), POLL_INTERVAL_MS);
+    setInterval(() => refreshLiveScores("score").catch((error) => console.error(error)), SCORE_POLL_INTERVAL_MS);
     setInterval(() => tickPredictions(), LIVE_TICK_INTERVAL_MS);
     setInterval(() => {
       for (const response of clients) response.write(": heartbeat\n\n");

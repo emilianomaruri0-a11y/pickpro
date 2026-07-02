@@ -20,6 +20,8 @@ services:
         value: 10800000
       - key: LIVE_TICK_INTERVAL_MS
         value: 1000
+      - key: SCORE_POLL_INTERVAL_MS
+        value: 300000
       - key: EVENT_CACHE_TTL_HOURS
         value: 36
       - key: SESSION_TTL_HOURS
@@ -31,10 +33,4 @@ services:
       - key: SUPABASE_KV_TABLE
         value: pickpro_kv
       - key: THE_ODDS_API_KEY
-        sync: false
-      - key: APP_BASE_URL
-        sync: false
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
         sync: false
