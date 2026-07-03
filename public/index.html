@@ -23,6 +23,10 @@
         <img src="/assets/pickpro-splash-desktop.png" alt="" decoding="async" />
       </picture>
       <div class="launch-content" aria-label="Pantalla inicial de PickPro">
+        <div class="launch-copy" aria-hidden="true">
+          <strong>PickPro</strong>
+          <span>Predicciones deportivas con analisis inteligente</span>
+        </div>
         <div class="launch-action" id="launchAction">
           <div class="launch-loading">
             <span class="launch-spinner" aria-hidden="true"></span>
@@ -57,16 +61,10 @@
           <div class="hero-content">
             <div class="ai-pill">
               <span class="live-dot"></span>
-              IA en vivo - <strong id="heroWinRate">0%</strong> confianza promedio
+              <strong id="heroWinRate">0%</strong> confianza promedio
             </div>
-            <h1>Predicciones IA en vivo</h1>
-            <p>Predicciones, probabilidades y analisis en tiempo real para partidos y eventos deportivos.</p>
-
-            <form class="search-panel" id="searchForm">
-              <span aria-hidden="true">?</span>
-              <input id="searchInput" type="search" placeholder="Busca partido, equipo o liga..." autocomplete="off" />
-              <button type="submit">Buscar</button>
-            </form>
+            <h1>Predicciones deportivas con analisis inteligente</h1>
+            <p>Picks con probabilidad estimada, riesgo claro e historial para tomar mejores decisiones.</p>
 
             <div class="quick-tags" id="quickTags"></div>
           </div>
@@ -74,7 +72,7 @@
           <div class="hero-stats">
             <div>
               <strong id="averageConfidence">0%</strong>
-              <span>Win rate</span>
+              <span>Efectividad</span>
             </div>
             <div>
               <strong id="totalEvents">0</strong>
@@ -94,6 +92,9 @@
           </button>
           <button class="parlay-shortcut" id="hitsShortcut" type="button">
             <span>Acertados de hoy</span>
+          </button>
+          <button class="parlay-shortcut" id="resultsShortcut" type="button">
+            <span>Resultados de hoy</span>
           </button>
           <button class="parlay-shortcut" id="featuredShortcut" type="button">
             <span>Picks alta confianza</span>
@@ -217,7 +218,7 @@
           <button class="active" type="button" data-view="home">Inicio</button>
           <button type="button" data-view="profile">Perfil</button>
         </nav>
-        <button class="bottom-search-button" type="button" data-view="search" aria-label="Buscar con IA" title="Buscar con IA">
+        <button class="bottom-search-button" type="button" data-view="search" aria-label="Buscar partidos" title="Buscar partidos">
           <span class="nav-search-icon" aria-hidden="true"></span>
         </button>
       </div>

@@ -6,10 +6,10 @@ const state = {
   sports: [],
   selectedId: null,
   sportKey: "all",
+  searchQuery: "",
   view: "home",
   parlayOpen: false,
   profileHandleDirty: false,
-  aiMessages: [],
   payload: null,
   csrfToken: null,
   user: null,
@@ -39,12 +39,14 @@ const elements = {
   profileUsername: document.querySelector("#profileUsername"),
   parlayShortcut: document.querySelector("#parlayShortcut"),
   hitsShortcut: document.querySelector("#hitsShortcut"),
+  resultsShortcut: document.querySelector("#resultsShortcut"),
   featuredShortcut: document.querySelector("#featuredShortcut"),
   sourcesShortcut: document.querySelector("#sourcesShortcut"),
   dailyPredictionShortcut: document.querySelector("#dailyPredictionShortcut"),
   parlayDailyCard: document.querySelector("#parlayDailyCard"),
   dailyParlayContent: null,
   hitsPageContent: null,
+  resultsPageContent: null,
   featuredPageContent: null,
   sourcesPageContent: null,
   searchAiContent: null,
@@ -107,6 +109,13 @@ function setupViews() {
   hitsView.innerHTML = `<div id="hitsPageContent"></div>`;
   main.appendChild(hitsView);
 
+  const resultsView = document.createElement("section");
+  resultsView.id = "resultsView";
+  resultsView.className = "app-view page-view results-view";
+  resultsView.hidden = true;
+  resultsView.innerHTML = `<div id="resultsPageContent"></div>`;
+  main.appendChild(resultsView);
+
   const featuredView = document.createElement("section");
   featuredView.id = "featuredView";
   featuredView.className = "app-view page-view featured-view";
@@ -130,6 +139,7 @@ function setupViews() {
 
   elements.dailyParlayContent = dailyParlayView.querySelector("#dailyParlayContent");
   elements.hitsPageContent = hitsView.querySelector("#hitsPageContent");
+  elements.resultsPageContent = resultsView.querySelector("#resultsPageContent");
   elements.featuredPageContent = featuredView.querySelector("#featuredPageContent");
   elements.sourcesPageContent = sourcesView.querySelector("#sourcesPageContent");
   elements.searchAiContent = searchAiView.querySelector("#searchAiContent");
@@ -223,7 +233,7 @@ function liveClockText(event) {
 
 function eventTimeHtml(event) {
   if (event.status === "live") {
-    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>LIVE</span>`;
+    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>En vivo</span>`;
   }
   const text = event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime);
   return `<span>${escapeHtml(text)}</span>`;
@@ -516,7 +526,7 @@ function buildClientSummary(events) {
 }
 
 function applyCurrentFilters(payload = state.payload) {
-  const query = elements.searchInput.value.trim().toLowerCase();
+  const query = state.searchQuery.trim().toLowerCase();
   state.events = state.allEvents.filter((event) => {
     const sportMatches = state.sportKey === "all" || event.sportKey === state.sportKey;
     return sportMatches && eventMatchesSearch(event, query);
@@ -527,6 +537,12 @@ function applyCurrentFilters(payload = state.payload) {
     sports: state.sports,
     summary: buildClientSummary(state.events)
   };
+}
+
+function clearSearchFilter() {
+  state.searchQuery = "";
+  if (elements.searchInput) elements.searchInput.value = "";
+  applyCurrentFilters();
 }
 
 function sortedEvents() {
@@ -574,7 +590,8 @@ function renderSportTabs() {
   elements.sportTabs.querySelectorAll("[data-sport-key]").forEach((button) => {
     button.addEventListener("click", () => {
       state.sportKey = button.dataset.sportKey;
-      elements.searchInput.value = "";
+      state.searchQuery = "";
+      if (elements.searchInput) elements.searchInput.value = "";
       applyCurrentFilters();
       if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
         state.selectedId = state.events[0]?.id || null;
@@ -838,7 +855,7 @@ function parlayLegPool(event) {
   const favoritePlus = `${pickSide} +1.5`;
   const pool = [
     {
-      market: "Money Line",
+      market: "Ganador del partido",
       selection: `${pickSide} gana`,
       eventName,
       odds: legOdds(event, 0, baseConfidence, pick.bestOdds),
@@ -1034,7 +1051,7 @@ function renderDailyParlayPage() {
     <section class="profile-hero daily-parlay-hero">
       <span class="ai-pill"><span class="live-dot"></span> Parlay del dia</span>
       <h1>Parlays generados por IA</h1>
-      <p>Combinaciones ajustadas a ${escapeHtml(selectedBookmakerName())} con mercados como Money Line, goles/carreras totales, ambos anotan, corners, run line, hits y ponches.</p>
+      <p>Combinaciones ajustadas a ${escapeHtml(selectedBookmakerName())} con mercados como ganador del partido, goles/carreras totales, ambos anotan, corners, linea de carreras, hits y ponches.</p>
     </section>
     <article class="predictions-card single-parlay-card">
       <div class="predictions-header">
@@ -1078,6 +1095,219 @@ function resultLabel(event) {
   if (actual === "away") return event.awayTeam;
   if (actual === "draw") return "Empate";
   return "Sin resultado";
+}
+
+function confidenceTier(confidence) {
+  if (confidence >= 76) return "Alta";
+  if (confidence >= 64) return "Media";
+  return "Baja";
+}
+
+function riskTier(value) {
+  const risk = String(value || "").toLowerCase();
+  if (risk.includes("alto")) return "Alto";
+  if (risk.includes("medio")) return "Medio";
+  return "Bajo";
+}
+
+function settledPickEvents(filter = () => true) {
+  return state.allEvents
+    .filter((event) => actualOutcomeKey(event) && event.prediction?.pick?.bestOdds)
+    .filter(filter);
+}
+
+function pickWon(event) {
+  return actualOutcomeKey(event) === event.prediction?.pick?.key;
+}
+
+function pickHistoryMetrics(events) {
+  const closed = events.filter((event) => actualOutcomeKey(event) && event.prediction?.pick?.bestOdds);
+  const total = closed.length;
+  const hits = closed.filter(pickWon).length;
+  const misses = total - hits;
+  const units = closed.reduce((sum, event) => {
+    const odds = Number(event.prediction?.pick?.bestOdds || 1);
+    return sum + (pickWon(event) ? Math.max(0, odds - 1) : -1);
+  }, 0);
+  const avgOdds = total
+    ? closed.reduce((sum, event) => sum + Number(event.prediction?.pick?.bestOdds || 0), 0) / total
+    : 0;
+  const latest = closed
+    .map((event) => new Date(event.commenceTime).getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+
+  return {
+    total,
+    hits,
+    misses,
+    roi: total ? (units / total) * 100 : 0,
+    units,
+    avgOdds,
+    latest
+  };
+}
+
+function formatUnits(value) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}u`;
+}
+
+function formatRoi(value) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function formatShortDate(value) {
+  if (!value) return "--";
+  return new Intl.DateTimeFormat("es-MX", {
+    day: "2-digit",
+    month: "short"
+  }).format(new Date(value));
+}
+
+function renderPickHistoryPanel(events, title = "Historial real de picks", subtitle = "Solo se calculan partidos con marcador final confirmado.") {
+  const metrics = pickHistoryMetrics(events);
+  return `
+    <article class="history-card">
+      <div class="predictions-header">
+        <div class="predictions-icon"><span aria-hidden="true">H</span></div>
+        <div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(subtitle)}</p>
+        </div>
+      </div>
+      <div class="history-grid">
+        <div>
+          <strong>${metrics.hits}</strong>
+          <span>Aciertos</span>
+        </div>
+        <div>
+          <strong>${metrics.misses}</strong>
+          <span>Fallos</span>
+        </div>
+        <div>
+          <strong>${formatRoi(metrics.roi)}</strong>
+          <span>ROI</span>
+        </div>
+        <div>
+          <strong>${formatUnits(metrics.units)}</strong>
+          <span>Unidades</span>
+        </div>
+        <div>
+          <strong>${metrics.avgOdds ? formatOdds(metrics.avgOdds) : "--"}</strong>
+          <span>Cuota prom.</span>
+        </div>
+        <div>
+          <strong>${formatShortDate(metrics.latest)}</strong>
+          <span>Fecha</span>
+        </div>
+      </div>
+    </article>`;
+}
+
+function recommendedOddsText(pick) {
+  if (!pick?.bestOdds) return "Esperar cuota";
+  const target = Math.max(1.2, Number(pick.bestOdds) * 0.96);
+  return `${formatOdds(target)} o mejor`;
+}
+
+function quickAnalysisReasons(event) {
+  const pick = event.prediction.pick;
+  const rows = probabilityRows(event);
+  const selected = rows.find((row) => row.key === pick.key);
+  const nextBest = rows
+    .filter((row) => row.key !== pick.key)
+    .sort((a, b) => b.percent - a.percent)[0];
+  const spread = selected && nextBest ? Math.max(1, selected.percent - nextBest.percent) : 0;
+  const reasons = [
+    `${pick.label} marca ${selected?.percent || pick.confidence}% de probabilidad estimada.`,
+    spread ? `Ventaja de ${spread} pts contra la siguiente opcion del mercado.` : `El modelo encuentra valor frente a la cuota disponible.`,
+    `${selectedBookmakerName()} muestra referencia de cuota ${pick.bestOdds ? formatOdds(pick.bestOdds) : "por confirmar"}.`
+  ];
+
+  return [...reasons, ...(pick.reasons || [])].slice(0, 3);
+}
+
+function detailStatsRows(event) {
+  const pick = event.prediction.pick;
+  const totalScore =
+    event.score && Number.isFinite(Number(event.score.home)) && Number.isFinite(Number(event.score.away))
+      ? Number(event.score.home) + Number(event.score.away)
+      : null;
+  const scoreLabel = event.sportKey?.includes("baseball") ? "Carreras" : "Goles";
+
+  return [
+    ["Ultimos 5", "Pendiente de feed estadistico oficial"],
+    [scoreLabel, totalScore === null ? "Se actualiza con marcador oficial" : `${totalScore} acumulados`],
+    ["Lesiones", "Sin feed medico conectado"],
+    ["Local/visita", `${event.homeTeam} local / ${event.awayTeam} visita`],
+    ["Estado", event.status === "live" ? liveClockText(event) : eventStatusLabel(event)],
+    ["Pick historico", pick.key === "draw" ? "Mercado de empate" : "Ganador principal"]
+  ];
+}
+
+function renderProDetailPanel(event) {
+  const pick = event.prediction.pick;
+  const similarHistory = settledPickEvents(
+    (item) => item.sportKey === event.sportKey && item.prediction?.pick?.key === pick.key
+  );
+  const metrics = pickHistoryMetrics(similarHistory);
+  const historicalRate = metrics.total ? `${Math.round((metrics.hits / metrics.total) * 100)}%` : "Sin cierre";
+
+  return `
+    <article class="pro-match-panel">
+      <div class="pro-pick-main">
+        <div>
+          <span>Pick principal</span>
+          <strong>${escapeHtml(pick.label)}</strong>
+          <small>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</small>
+        </div>
+        <em>${escapeHtml(confidenceTier(pick.confidence))}</em>
+      </div>
+      <div class="pro-info-grid">
+        <div>
+          <span>Confianza</span>
+          <strong>${escapeHtml(confidenceTier(pick.confidence))}</strong>
+          <small>${pick.confidence}% estimado</small>
+        </div>
+        <div>
+          <span>Cuota recomendada</span>
+          <strong>${escapeHtml(recommendedOddsText(pick))}</strong>
+          <small>${escapeHtml(selectedBookmakerName())}</small>
+        </div>
+        <div>
+          <span>Riesgo</span>
+          <strong>${escapeHtml(riskTier(pick.risk))}</strong>
+          <small>${escapeHtml(pick.recommendation || "Controlar stake")}</small>
+        </div>
+        <div>
+          <span>Resultado historico</span>
+          <strong>${escapeHtml(historicalRate)}</strong>
+          <small>${metrics.total ? `${metrics.hits}-${metrics.misses} picks similares` : "Esperando finales"}</small>
+        </div>
+      </div>
+      <div class="pro-two-columns">
+        <section>
+          <h3>Analisis rapido</h3>
+          <ul>
+            ${quickAnalysisReasons(event).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+          </ul>
+        </section>
+        <section>
+          <h3>Estadisticas</h3>
+          <div class="detail-stat-list">
+            ${detailStatsRows(event)
+              .map(
+                ([label, value]) => `
+              <div>
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </div>`
+              )
+              .join("")}
+          </div>
+        </section>
+      </div>
+    </article>`;
 }
 
 function buildSettledParlayHits() {
@@ -1130,6 +1360,7 @@ function renderHitsPage() {
       <h1>Picks y parlays cerrados</h1>
       <p>Solo aparecen cuando el marcador final confirma que la prediccion publicada coincidio con el resultado.</p>
     </section>
+    ${renderPickHistoryPanel(settledPickEvents(), "Historial real de picks", "Aciertos, fallos y ROI se calculan con marcadores finales.")}
     <article class="predictions-card">
       <div class="predictions-header">
         <div class="predictions-icon"><span aria-hidden="true">A</span></div>
@@ -1224,132 +1455,124 @@ function renderSourcesPage() {
   document.querySelector("#sourcesBackButton")?.addEventListener("click", () => showView("home"));
 }
 
-function aiTargetEvents(question) {
-  const words = String(question || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/i)
-    .map((word) => word.trim())
-    .filter((word) => word.length >= 3);
-  const source = state.allEvents.length ? state.allEvents : state.events;
-  const matches = words.length
-    ? source.filter((event) => eventMatchesSearch(event, words.join(" ")))
-    : [];
-  const pool = matches.length ? matches : strictEvents();
-  return [...pool]
-    .sort((a, b) => {
-      const liveDelta = Number(b.status === "live") - Number(a.status === "live");
-      if (liveDelta) return liveDelta;
-      return (b.prediction?.pick?.confidence || 0) - (a.prediction?.pick?.confidence || 0);
-    })
-    .slice(0, 3);
+function sourceEvents() {
+  return state.allEvents.length ? state.allEvents : state.events;
 }
 
-function buildAiAdvice(question, imageName) {
-  const events = aiTargetEvents(question);
-  if (!events.length) {
-    return "No encontre partidos suficientes con esos datos. Prueba con el nombre de un equipo, liga o mercado.";
-  }
-
-  const lines = [];
-  if (imageName) {
-    lines.push(`Foto recibida: ${imageName}. La uso como referencia junto con los eventos disponibles.`);
-  }
-  lines.push("Lectura rapida de apoyo:");
-  events.forEach((event, index) => {
-    const pick = event.prediction.pick;
-    const liveText = event.status === "live" ? ` en vivo ${liveClockText(event)}` : "";
-    lines.push(
-      `${index + 1}. ${event.homeTeam} vs ${event.awayTeam}${liveText}: ${pick.label}, ${pick.confidence}% confianza, momio ${formatOdds(pick.bestOdds)}.`
-    );
+function sortDiscoveryEvents(events) {
+  return [...events].sort((a, b) => {
+    const liveDelta = Number(b.status === "live") - Number(a.status === "live");
+    if (liveDelta) return liveDelta;
+    const finalDelta = Number(a.status === "final") - Number(b.status === "final");
+    if (finalDelta) return finalDelta;
+    const timeDelta = new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
+    if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta;
+    return (b.prediction?.pick?.confidence || 0) - (a.prediction?.pick?.confidence || 0);
   });
-  lines.push("No lo tomes como garantia: si el momio baja mucho, si el marcador cambia o si te sientes presionado, mejor no entrar.");
-  return lines.join("\n");
 }
 
-function renderAiMessage(message) {
-  const text = escapeHtml(message.text).replace(/\n/g, "<br>");
-  return `
-    <div class="ai-message ${message.role === "user" ? "user" : "assistant"}">
-      ${message.imageUrl ? `<img class="ai-chat-thumb" src="${escapeHtml(message.imageUrl)}" alt="Foto enviada" />` : ""}
-      <p>${text}</p>
+function eventIsToday(event) {
+  const eventDate = new Date(event?.commenceTime);
+  if (Number.isNaN(eventDate.getTime())) return false;
+  return eventDate.toDateString() === new Date().toDateString();
+}
+
+function renderSearchResults(container, query = state.searchQuery) {
+  if (!container) return;
+  const normalized = String(query || "").trim().toLowerCase();
+  const events = sortDiscoveryEvents(sourceEvents().filter((event) => eventMatchesSearch(event, normalized))).slice(0, 36);
+  container.innerHTML = events.length
+    ? events.map(renderMatchCard).join("")
+    : `<div class="empty-message">No encontre partidos con esa busqueda.</div>`;
+  bindEventCards(container);
+}
+
+function renderTodayResultsPage() {
+  if (!elements.resultsPageContent) return;
+  const events = sortDiscoveryEvents(sourceEvents().filter(eventIsToday));
+  const finalCount = events.filter((event) => event.status === "final").length;
+  const liveCount = events.filter((event) => event.status === "live").length;
+  elements.resultsPageContent.innerHTML = `
+    <div class="detail-actions">
+      <button class="text-button detail-back" id="resultsBackButton" type="button">Volver a inicio</button>
+      <span class="source-badge">${events.length} partidos</span>
+    </div>
+    <section class="profile-hero page-hero">
+      <span class="ai-pill"><span class="live-dot"></span> Resultados de hoy</span>
+      <h1>Marcadores y partidos del dia</h1>
+      <p>Partidos en vivo primero, despues los proximos y los finalizados de la fecha.</p>
+    </section>
+    <div class="results-summary">
+      <div><strong>${liveCount}</strong><span>En vivo</span></div>
+      <div><strong>${finalCount}</strong><span>Finalizados</span></div>
+      <div><strong>${events.length}</strong><span>Total hoy</span></div>
+    </div>
+    <div class="match-stack page-match-stack" id="todayResultsList">
+      ${events.length ? events.map(renderMatchCard).join("") : `<div class="empty-message">Todavia no hay partidos de hoy disponibles.</div>`}
     </div>`;
+
+  bindEventCards(elements.resultsPageContent.querySelector("#todayResultsList"));
+  document.querySelector("#resultsBackButton")?.addEventListener("click", () => {
+    clearSearchFilter();
+    showView("home");
+    render();
+  });
 }
 
 function renderSearchAiPage() {
   if (!elements.searchAiContent) return;
-  const suggestions = strictEvents().slice(0, 3);
+  const existingInput = elements.searchAiContent.querySelector("#matchSearchInput");
+  const focusedSearch = existingInput && document.activeElement === existingInput;
+  const existingResults = elements.searchAiContent.querySelector("#searchPageResults");
+  if (focusedSearch && existingResults) {
+    state.searchQuery = existingInput.value;
+    renderSearchResults(existingResults, state.searchQuery);
+    return;
+  }
+
   elements.searchAiContent.innerHTML = `
     <div class="detail-actions">
       <button class="text-button detail-back" id="searchBackButton" type="button">Volver a inicio</button>
-      <span class="source-badge">IA de apoyo</span>
+      <span class="source-badge">Buscar partidos</span>
     </div>
     <section class="profile-hero page-hero">
-      <span class="ai-pill"><span class="live-dot"></span> Busqueda IA</span>
-      <h1>Consulta picks y fotos</h1>
-      <p>Escribe una duda o adjunta una captura para recibir una lectura directa con los partidos disponibles.</p>
+      <span class="ai-pill"><span class="live-dot"></span> Busqueda</span>
+      <h1>Busca partido, equipo o liga</h1>
+      <p>Encuentra partidos en vivo, proximos juegos y eventos disponibles en PickPro.</p>
     </section>
-    <article class="ai-chat-card">
-      <div class="ai-chat-messages" id="aiChatMessages">
-        ${
-          state.aiMessages.length
-            ? state.aiMessages.map(renderAiMessage).join("")
-            : `
-              <div class="ai-message assistant">
-                <p>${escapeHtml(
-                  suggestions.length
-                    ? `Puedo revisar contigo ${suggestions.map((event) => `${event.homeTeam} vs ${event.awayTeam}`).join(", ")}.`
-                    : "Puedo revisar contigo los partidos cuando carguen los datos."
-                )}</p>
-              </div>`
-        }
-      </div>
-      <form class="ai-chat-form" id="aiChatForm">
-        <button class="ai-photo-button" id="aiPhotoButton" type="button">
-          <span class="nav-search-icon" aria-hidden="true"></span>
-          Foto
-        </button>
-        <input class="ai-file-input" id="aiPhotoInput" type="file" accept="image/*" />
-        <input id="aiQuestionInput" name="question" type="text" autocomplete="off" inputmode="text" placeholder="Escribe equipo, partido o duda..." />
-        <button type="submit">Enviar</button>
+    <article class="search-page-card">
+      <form class="search-panel search-page-panel" id="matchSearchForm">
+        <span class="nav-search-icon" aria-hidden="true"></span>
+        <input id="matchSearchInput" name="matchSearch" type="search" autocomplete="off" inputmode="search" placeholder="Buscar por equipo, partido o liga..." value="${escapeHtml(state.searchQuery)}" />
+        <button type="submit">Buscar</button>
       </form>
-      <p class="ai-photo-name" id="aiPhotoName"></p>
+      <div class="match-stack search-results" id="searchPageResults"></div>
     </article>`;
 
-  const photoInput = elements.searchAiContent.querySelector("#aiPhotoInput");
-  const photoButton = elements.searchAiContent.querySelector("#aiPhotoButton");
-  const photoName = elements.searchAiContent.querySelector("#aiPhotoName");
-  const questionInput = elements.searchAiContent.querySelector("#aiQuestionInput");
-  photoButton?.addEventListener("click", () => photoInput?.click());
-  photoInput?.addEventListener("change", () => {
-    const file = photoInput.files?.[0];
-    photoName.textContent = file ? `Foto lista: ${file.name}` : "";
-  });
-  questionInput?.addEventListener("pointerdown", () => {
-    window.setTimeout(() => questionInput.focus({ preventScroll: true }), 0);
-  });
-
-  elements.searchAiContent.querySelector("#aiChatForm")?.addEventListener("submit", (event) => {
+  const form = elements.searchAiContent.querySelector("#matchSearchForm");
+  const input = elements.searchAiContent.querySelector("#matchSearchInput");
+  const results = elements.searchAiContent.querySelector("#searchPageResults");
+  const updateResults = () => {
+    state.searchQuery = input.value;
+    state.sportKey = state.searchQuery.trim() ? "all" : state.sportKey;
+    applyCurrentFilters();
+    renderSearchResults(results, state.searchQuery);
+  };
+  form?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const question = questionInput.value.trim();
-    const file = photoInput?.files?.[0] || null;
-    if (!question && !file) return;
-    const imageUrl = file ? URL.createObjectURL(file) : "";
-    state.aiMessages.push({
-      role: "user",
-      text: question || "Analiza esta captura.",
-      imageUrl
-    });
-    state.aiMessages.push({
-      role: "assistant",
-      text: buildAiAdvice(question, file?.name || "")
-    });
-    renderSearchAiPage();
+    updateResults();
   });
-  questionInput?.focus({ preventScroll: true });
+  input?.addEventListener("input", updateResults);
+  input?.addEventListener("pointerdown", () => {
+    window.setTimeout(() => input.focus({ preventScroll: true }), 0);
+  });
+  renderSearchResults(results, state.searchQuery);
 
-  document.querySelector("#searchBackButton")?.addEventListener("click", () => showView("home"));
+  document.querySelector("#searchBackButton")?.addEventListener("click", () => {
+    clearSearchFilter();
+    showView("home");
+    render();
+  });
 }
 
 function renderMatchDetail() {
@@ -1410,6 +1633,8 @@ function renderMatchDetail() {
           .join("")}
       </div>
     </article>
+
+    ${renderProDetailPanel(event)}
 
     <article class="predictions-card single-parlay-card">
       <div class="predictions-header">
@@ -1489,16 +1714,18 @@ function showView(view) {
   const matchDetailView = document.querySelector("#matchDetailView");
   const dailyParlayView = document.querySelector("#dailyParlayView");
   const hitsView = document.querySelector("#hitsView");
+  const resultsView = document.querySelector("#resultsView");
   const featuredView = document.querySelector("#featuredView");
   const sourcesView = document.querySelector("#sourcesView");
   const searchAiView = document.querySelector("#searchAiView");
-  if (!homeView || !profileView || !matchDetailView || !dailyParlayView || !hitsView || !featuredView || !sourcesView || !searchAiView) return;
+  if (!homeView || !profileView || !matchDetailView || !dailyParlayView || !hitsView || !resultsView || !featuredView || !sourcesView || !searchAiView) return;
 
   homeView.hidden = view !== "home";
   profileView.hidden = view !== "profile";
   matchDetailView.hidden = view !== "match";
   dailyParlayView.hidden = view !== "parlay";
   hitsView.hidden = view !== "hits";
+  resultsView.hidden = view !== "results";
   featuredView.hidden = view !== "featured";
   sourcesView.hidden = view !== "sources";
   searchAiView.hidden = view !== "search";
@@ -1507,10 +1734,12 @@ function showView(view) {
   });
   elements.parlayShortcut?.classList.toggle("active", view === "parlay");
   elements.hitsShortcut?.classList.toggle("active", view === "hits");
+  elements.resultsShortcut?.classList.toggle("active", view === "results");
   elements.featuredShortcut?.classList.toggle("active", view === "featured");
   elements.sourcesShortcut?.classList.toggle("active", view === "sources");
   if (view === "parlay") renderDailyParlayPage();
   if (view === "hits") renderHitsPage();
+  if (view === "results") renderTodayResultsPage();
   if (view === "featured") renderFeaturedPage();
   if (view === "sources") renderSourcesPage();
   if (view === "search") renderSearchAiPage();
@@ -1518,9 +1747,10 @@ function showView(view) {
   const hashMap = {
     parlay: "#/parlay-del-dia",
     hits: "#/acertados-de-hoy",
+    results: "#/resultados-de-hoy",
     featured: "#/picks-alta-confianza",
     sources: "#/fuentes-de-cuotas",
-    search: "#/busqueda-ia"
+    search: "#/buscar"
   };
   if (hashMap[view] && location.hash !== hashMap[view]) {
     history.pushState(null, "", hashMap[view]);
@@ -1541,6 +1771,10 @@ function routeFromHash() {
     showView("hits");
     return;
   }
+  if (hash === "#/resultados-de-hoy") {
+    showView("results");
+    return;
+  }
   if (hash === "#/picks-alta-confianza" || hash === "#/picks-destacados") {
     showView("featured");
     return;
@@ -1549,7 +1783,7 @@ function routeFromHash() {
     showView("sources");
     return;
   }
-  if (hash === "#/busqueda-ia") {
+  if (hash === "#/buscar" || hash === "#/busqueda-ia") {
     showView("search");
     return;
   }
@@ -1633,6 +1867,7 @@ function render() {
   renderCombinations();
   if (state.view === "parlay") renderDailyParlayPage();
   if (state.view === "hits") renderHitsPage();
+  if (state.view === "results") renderTodayResultsPage();
   if (state.view === "featured") renderFeaturedPage();
   if (state.view === "sources") renderSourcesPage();
   if (state.view === "search") renderSearchAiPage();
@@ -1726,22 +1961,26 @@ function setupPullToRefresh() {
 
 function bindEvents() {
   let searchTimer = null;
-  elements.searchForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (elements.searchInput.value.trim()) state.sportKey = "all";
-    fetchEvents();
-  });
-  elements.searchInput.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      if (elements.searchInput.value.trim()) state.sportKey = "all";
-      applyCurrentFilters();
-      if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
-        state.selectedId = state.events[0]?.id || null;
-      }
-      render();
-    }, 120);
-  });
+  if (elements.searchForm && elements.searchInput) {
+    elements.searchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      state.searchQuery = elements.searchInput.value;
+      if (state.searchQuery.trim()) state.sportKey = "all";
+      fetchEvents();
+    });
+    elements.searchInput.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        state.searchQuery = elements.searchInput.value;
+        if (state.searchQuery.trim()) state.sportKey = "all";
+        applyCurrentFilters();
+        if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
+          state.selectedId = state.events[0]?.id || null;
+        }
+        render();
+      }, 120);
+    });
+  }
   elements.profileButton?.addEventListener("click", () => showView("profile"));
   elements.logoutButton?.addEventListener("click", async () => {
     await authFetch("/api/logout", { method: "POST" });
@@ -1753,6 +1992,9 @@ function bindEvents() {
   });
   elements.hitsShortcut?.addEventListener("click", () => {
     showView("hits");
+  });
+  elements.resultsShortcut?.addEventListener("click", () => {
+    showView("results");
   });
   elements.featuredShortcut?.addEventListener("click", () => {
     showView("featured");
@@ -1785,7 +2027,8 @@ function bindEvents() {
     button.addEventListener("click", () => {
       showView("home");
       state.sportKey = "all";
-      elements.searchInput.value = "";
+      state.searchQuery = "";
+      if (elements.searchInput) elements.searchInput.value = "";
       applyCurrentFilters();
       if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
         state.selectedId = state.events[0]?.id || null;
@@ -1795,7 +2038,12 @@ function bindEvents() {
   });
   document.querySelectorAll(".bottom-nav-shell [data-view]").forEach((button) => {
     button.addEventListener("click", () => {
-      showView(button.dataset.view);
+      const nextView = button.dataset.view;
+      if (nextView === "home") {
+        clearSearchFilter();
+      }
+      showView(nextView);
+      render();
     });
   });
   window.addEventListener("popstate", routeFromHash);
