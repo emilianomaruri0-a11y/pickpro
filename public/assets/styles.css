@@ -5581,3 +5581,73 @@ input:focus {
     height: 15px;
   }
 }
+
+/* Profile chip final fix */
+.profile-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  gap: 10px;
+  min-width: 118px;
+  max-width: min(244px, calc(100vw - 150px));
+  min-height: 54px;
+  padding: 6px 8px 6px 18px;
+  overflow: hidden;
+}
+
+.profile-username {
+  display: block;
+  min-width: 0;
+  max-width: 146px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-avatar {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+}
+
+.profile-avatar::before {
+  display: none !important;
+  content: none !important;
+}
+
+.profile-avatar span {
+  position: relative;
+  inset: auto;
+  width: 24px;
+  height: 14px;
+  border: 4px solid #fff;
+  border-top: 0;
+  border-radius: 0 0 999px 999px;
+}
+
+.profile-avatar span::before {
+  position: absolute;
+  left: 50%;
+  top: -17px;
+  width: 10px;
+  height: 10px;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  content: "";
+  transform: translateX(-50%);
+}
+
+@media (max-width: 520px) {
+  .profile-entry {
+    min-width: 54px;
+    max-width: 54px;
+    padding: 5px;
+  }
+
+  .profile-username {
+    display: none;
+  }
+}
