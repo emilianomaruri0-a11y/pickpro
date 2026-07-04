@@ -16,26 +16,7 @@
     <link rel="stylesheet" href="/assets/styles.css" />
     <script defer src="/assets/app.js"></script>
   </head>
-  <body class="app-booting">
-    <section class="launch-screen" id="launchScreen" aria-live="polite">
-      <picture class="launch-art" aria-hidden="true">
-        <source media="(max-width: 720px)" srcset="/assets/pickpro-splash-mobile.png" />
-        <img src="/assets/pickpro-splash-desktop.png" alt="" decoding="async" />
-      </picture>
-      <div class="launch-content" aria-label="Pantalla inicial de PickPro">
-        <div class="launch-copy" aria-hidden="true">
-          <strong>PickPro</strong>
-          <span>Predicciones deportivas con analisis inteligente</span>
-        </div>
-        <div class="launch-action" id="launchAction">
-          <div class="launch-loading">
-            <span class="launch-spinner" aria-hidden="true"></span>
-            <strong>Cargando...</strong>
-            <small>Preparando tus mejores picks</small>
-          </div>
-        </div>
-      </div>
-    </section>
+  <body class="app-entered">
     <div class="pull-refresh" id="pullRefresh" aria-hidden="true">
       <span></span>
       <strong>Actualizar</strong>
@@ -47,6 +28,9 @@
         </div>
 
         <div class="header-actions">
+          <button class="header-icon-button notification-button" type="button" aria-label="Notificaciones" title="Notificaciones">
+            <span aria-hidden="true"></span>
+          </button>
           <button class="profile-entry" id="profileButton" type="button" aria-label="Abrir perfil" title="Abrir perfil">
             <span class="profile-username" id="profileUsername">Perfil</span>
             <span class="profile-avatar" aria-hidden="true">
@@ -106,6 +90,8 @@
 
         <section class="content-grid">
           <div class="main-column">
+            <section class="daily-spotlight" id="dailySpotlight" aria-label="Pick destacado del dia"></section>
+
             <div class="section-title">
               <h2><span aria-hidden="true">~</span> Partidos en vivo</h2>
               <button class="text-button" type="button" data-action="show-all">Ver todos <span aria-hidden="true">-&gt;</span></button>
@@ -199,6 +185,9 @@
           </div>
 
           <aside class="side-column">
+            <article class="performance-card" id="performancePanel" aria-label="Rendimiento general"></article>
+            <article class="latest-picks-card" id="latestPicksPanel" aria-label="Ultimos picks"></article>
+
             <div class="status-card">
               <span class="status-light" id="statusDot"></span>
               <div>
@@ -216,6 +205,9 @@
       <div class="bottom-nav-shell" aria-label="Navegacion principal">
         <nav class="bottom-nav">
           <button class="active" type="button" data-view="home">Inicio</button>
+          <button type="button" data-nav-target="liveMatches">Partidos</button>
+          <button type="button" data-view="featured">Picks</button>
+          <button type="button" data-nav-target="performancePanel">Rendimiento</button>
           <button type="button" data-view="profile">Perfil</button>
         </nav>
         <button class="bottom-search-button" type="button" data-view="search" aria-label="Buscar partidos" title="Buscar partidos">

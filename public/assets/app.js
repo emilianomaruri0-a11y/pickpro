@@ -9,6 +9,8 @@ const state = {
   searchQuery: "",
   view: "home",
   parlayOpen: false,
+  parlayType: "conservador",
+  parlayStake: 100,
   profileHandleDirty: false,
   payload: null,
   csrfToken: null,
@@ -26,6 +28,9 @@ const elements = {
   dailyPredictionList: document.querySelector("#dailyPredictionList"),
   comboList: document.querySelector("#comboList"),
   analysisCard: document.querySelector("#analysisCard"),
+  dailySpotlight: document.querySelector("#dailySpotlight"),
+  performancePanel: document.querySelector("#performancePanel"),
+  latestPicksPanel: document.querySelector("#latestPicksPanel"),
   sportTabs: document.querySelector("#sportTabs"),
   quickTags: document.querySelector("#quickTags"),
   feedMode: document.querySelector("#feedMode"),
@@ -57,9 +62,7 @@ const elements = {
   profileDetails: document.querySelector("#profileDetails"),
   profileForm: document.querySelector("#profileForm"),
   profileHandleInput: document.querySelector("#profileHandleInput"),
-  profileMessage: document.querySelector("#profileMessage"),
-  launchScreen: document.querySelector("#launchScreen"),
-  launchAction: document.querySelector("#launchAction")
+  profileMessage: document.querySelector("#profileMessage")
 };
 
 function setupViews() {
@@ -147,18 +150,22 @@ function setupViews() {
 
 setupViews();
 
+const allowedSportKeys = new Set(["soccer_fifa_world_cup", "baseball_mlb"]);
+
 const sportOptions = [
-  { label: "MLB", value: "baseball_mlb", query: "MLB", logo: "/assets/league-mlb-official.svg" },
-  { label: "Copa Mundial", value: "soccer_fifa_world_cup", query: "Copa Mundial", logo: "/assets/league-worldcup-official.svg" }
+  { label: "Todos", value: "all", query: "Todos", logo: "" },
+  { label: "Futbol", value: "soccer_fifa_world_cup", query: "Futbol", logo: "/assets/league-worldcup-official.svg" },
+  { label: "MLB", value: "baseball_mlb", query: "MLB", logo: "/assets/league-mlb-official.svg" }
 ];
 
 const mexicanBooks = [
   { name: "Mejor disponible", subtitle: "Compara todas las fuentes", logo: "*", book: "best" },
   { name: "Draftea", subtitle: "Referencia Mexico", logo: "D", book: "Draftea" },
   { name: "Playdoit", subtitle: "Referencia Mexico", logo: "P", book: "Playdoit" },
-  { name: "Caliente.mx", subtitle: "Referencia Mexico", logo: "C", book: "Caliente.mx" },
+  { name: "Caliente", subtitle: "Referencia Mexico", logo: "C", book: "Caliente" },
+  { name: "Bet365", subtitle: "Referencia Mexico", logo: "B", book: "Bet365" },
   { name: "Codere", subtitle: "Referencia Mexico", logo: "CO", book: "Codere" },
-  { name: "Bet350", subtitle: "Referencia Mexico", logo: "B", book: "Bet350" }
+  { name: "Otra", subtitle: "Usar cuota estimada", logo: "+", book: "Otra" }
 ];
 
 function selectedBookmaker() {
@@ -167,6 +174,32 @@ function selectedBookmaker() {
 
 function selectedBookmakerName() {
   return selectedBookmaker().name;
+}
+
+function bookmakerAliases(book) {
+  const aliases = {
+    Caliente: ["Caliente", "Caliente.mx", "caliente"],
+    Bet365: ["Bet365", "bet365"],
+    Draftea: ["Draftea"],
+    Playdoit: ["Playdoit"],
+    Codere: ["Codere"],
+    Otra: ["Otra"]
+  };
+  return aliases[book] || [book];
+}
+
+function rowMatchesBook(row, book) {
+  const value = typeof row === "string" ? row : row?.book || row?.bookmaker || row?.key || row?.name || "";
+  return bookmakerAliases(book).some((alias) => String(value).toLowerCase() === String(alias).toLowerCase());
+}
+
+function isAllowedSport(event) {
+  return allowedSportKeys.has(event?.sportKey);
+}
+
+function displaySportName(eventOrKey) {
+  const sportKey = typeof eventOrKey === "string" ? eventOrKey : eventOrKey?.sportKey;
+  return sportOptions.find((item) => item.value === sportKey)?.label || "Deporte";
 }
 
 function escapeHtml(value) {
@@ -233,7 +266,7 @@ function liveClockText(event) {
 
 function eventTimeHtml(event) {
   if (event.status === "live") {
-    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>En vivo</span>`;
+    return `<span class="live-label live-pulse"><span class="live-beacon" aria-hidden="true"></span>LIVE</span>`;
   }
   const text = event.status === "final" ? event.scoreSource || "Marcador final" : formatTime(event.commenceTime);
   return `<span>${escapeHtml(text)}</span>`;
@@ -330,7 +363,7 @@ function moneylineRows(event) {
   const selectedBook = state.settings.bookmaker || "best";
   const selectedRow =
     selectedBook !== "best"
-      ? (event.markets?.h2h || []).find((row) => row.book === selectedBook)
+      ? (event.markets?.h2h || []).find((row) => rowMatchesBook(row, selectedBook))
       : null;
   const best = {};
   event.prediction.outcomes.forEach((outcome) => {
@@ -386,8 +419,10 @@ function probabilityRows(event) {
 }
 
 function confidenceLabel(confidence) {
-  if (confidence >= 78) return "Filtro fuerte";
-  return confidence >= 70 ? "Alta confianza" : "Media confianza";
+  if (confidence > 80) return "Pick fuerte";
+  if (confidence >= 73) return "Alta confianza";
+  if (confidence >= 65) return "Riesgo medio";
+  return "Evitar";
 }
 
 function pickSubtitle(event) {
@@ -396,18 +431,112 @@ function pickSubtitle(event) {
   return `${pick.label} gana`;
 }
 
-function isStrictPick(event) {
+function impliedProbability(decimal) {
+  return Number.isFinite(decimal) && decimal > 1 ? 1 / decimal : null;
+}
+
+function availableDataScore(event) {
+  let score = 0.66;
+  if (event?.prediction?.pick?.bestOdds) score += 0.12;
+  if ((event?.markets?.h2h || []).length) score += 0.08;
+  if (event?.score || event?.status === "upcoming") score += 0.05;
+  if (event?.dataSource && !String(event.dataSource).toLowerCase().includes("demo")) score += 0.04;
+  if (event?.sportKey === "baseball_mlb") score -= 0.05;
+  if (event?.sportKey === "soccer_fifa_world_cup") score -= 0.03;
+  return clamp(score, 0, 1);
+}
+
+function adjustedPickConfidence(event) {
+  const pick = event?.prediction?.pick || {};
+  let confidence = Number(pick.confidence || 0);
+  const dataScore = availableDataScore(event);
+  if (dataScore < 0.72) confidence -= Math.round((0.72 - dataScore) * 35);
+  if (!pick.bestOdds) confidence -= 10;
+  if (String(pick.risk || "").toLowerCase().includes("alto")) confidence -= 5;
+  if (pick.recommendation === "Vigilar") confidence -= 4;
+  return Math.round(clamp(confidence, 0, 88));
+}
+
+function pickValueEdge(event) {
+  const pick = event?.prediction?.pick || {};
+  if (Number.isFinite(pick.edge)) return pick.edge;
+  const implied = impliedProbability(Number(pick.bestOdds));
+  if (implied === null || !Number.isFinite(pick.probability)) return null;
+  return pick.probability - implied;
+}
+
+function minimumRecommendedOdds(event) {
+  const odds = Number(event?.prediction?.pick?.bestOdds || 0);
+  if (!Number.isFinite(odds) || odds <= 1) return null;
+  return Math.max(1.2, odds * 0.96);
+}
+
+function pickQuality(event) {
   const pick = event?.prediction?.pick;
-  if (!pick?.bestOdds) return false;
-  if (pick.recommendation === "Vigilar") return false;
-  if (pick.confidence < 72) return false;
-  if (pick.risk === "Alto") return false;
-  return true;
+  const confidence = adjustedPickConfidence(event);
+  const edge = pickValueEdge(event);
+  const dataScore = availableDataScore(event);
+  const hasOdds = Boolean(pick?.bestOdds);
+  let quality = "Sin datos suficientes";
+  let risk = "Medio";
+  let recommendable = false;
+
+  if (!isAllowedSport(event) || !pick || !hasOdds || dataScore < 0.58) {
+    quality = "Sin datos suficientes";
+    risk = "Alto";
+  } else if (confidence < 65 || edge !== null && edge < 0) {
+    quality = "Evitar";
+    risk = "Alto";
+  } else if (confidence > 80) {
+    quality = "Pick fuerte";
+    risk = "Bajo";
+    recommendable = true;
+  } else if (confidence >= 73) {
+    quality = "Pick con valor";
+    risk = "Bajo";
+    recommendable = true;
+  } else {
+    quality = "Riesgo medio";
+    risk = "Medio";
+    recommendable = true;
+  }
+
+  const sportReasons =
+    event?.sportKey === "baseball_mlb"
+      ? [
+          "Se pondera moneyline, run line y total de carreras frente a la cuota disponible.",
+          "Sin feed avanzado completo de pitcher, bullpen o lesiones, la confianza se ajusta a la baja.",
+          "El valor se mantiene solo si la cuota cumple el minimo recomendado."
+        ]
+      : [
+          "Se pondera forma reciente, local/visitante, promedio de goles y tendencia over/under cuando el feed lo permite.",
+          "Lesiones y alineaciones no confirmadas reducen la confianza del pick.",
+          "El pick se evita si la probabilidad real no supera con margen a la cuota ofrecida."
+        ];
+
+  return {
+    confidence,
+    edge,
+    dataScore,
+    quality,
+    risk,
+    recommendable,
+    minOdds: minimumRecommendedOdds(event),
+    units: confidence > 80 ? 1.25 : confidence >= 73 ? 1 : 0.5,
+    reasons: sportReasons,
+    risks:
+      dataScore < 0.78
+        ? "Datos avanzados incompletos; conviene esperar confirmacion de alineaciones, bajas o pitchers."
+        : "Cambios de ultima hora pueden mover el valor del mercado."
+  };
+}
+
+function isStrictPick(event) {
+  return pickQuality(event).recommendable;
 }
 
 function strictEvents() {
-  const strict = sortedEvents().filter(isStrictPick);
-  return strict.length ? strict : sortedEvents().filter((event) => event.prediction?.pick?.bestOdds && event.prediction?.pick?.confidence >= 68);
+  return sortedEvents().filter(isStrictPick);
 }
 
 function displayUsername(user = state.user || {}) {
@@ -417,35 +546,6 @@ function displayUsername(user = state.user || {}) {
 function renderHeaderUser() {
   if (!elements.profileUsername) return;
   elements.profileUsername.textContent = displayUsername();
-}
-
-function setLaunchLoading(message = "Preparando tus mejores picks") {
-  if (!elements.launchAction) return;
-  elements.launchAction.innerHTML = `
-    <div class="launch-loading">
-      <span class="launch-spinner" aria-hidden="true"></span>
-      <strong>Cargando...</strong>
-      <small>${escapeHtml(message)}</small>
-    </div>`;
-}
-
-function enterAppFromLaunch() {
-  showView("home");
-  document.body.classList.add("app-entered");
-  document.body.classList.remove("app-booting");
-  elements.launchScreen?.setAttribute("aria-hidden", "true");
-}
-
-function setLaunchReady() {
-  if (!elements.launchAction) return;
-  document.body.classList.add("launch-ready");
-  elements.launchAction.innerHTML = `
-    <button class="launch-start-button" id="launchStartButton" type="button" aria-label="Comenzar">
-      <span class="launch-bolt" aria-hidden="true">+</span>
-      <strong>COMENZAR</strong>
-      <span aria-hidden="true">></span>
-    </button>`;
-  document.querySelector("#launchStartButton")?.addEventListener("click", enterAppFromLaunch);
 }
 
 async function authFetch(url, options = {}) {
@@ -488,8 +588,11 @@ async function fetchEvents() {
 }
 
 function applyPayload(payload) {
-  state.allEvents = payload.events || [];
+  state.allEvents = (payload.events || []).filter(isAllowedSport);
   state.sports = payload.sports || [];
+  if (state.sportKey !== "all" && !allowedSportKeys.has(state.sportKey)) {
+    state.sportKey = "all";
+  }
   applyCurrentFilters(payload);
   if (!state.selectedId || !state.events.some((event) => event.id === state.selectedId)) {
     state.selectedId = state.events[0]?.id || null;
@@ -529,7 +632,7 @@ function applyCurrentFilters(payload = state.payload) {
   const query = state.searchQuery.trim().toLowerCase();
   state.events = state.allEvents.filter((event) => {
     const sportMatches = state.sportKey === "all" || event.sportKey === state.sportKey;
-    return sportMatches && eventMatchesSearch(event, query);
+    return isAllowedSport(event) && sportMatches && eventMatchesSearch(event, query);
   });
   state.payload = {
     ...(payload || {}),
@@ -576,13 +679,13 @@ function renderStatus() {
 
 function renderSportTabs() {
   const availableKeys = new Set(state.allEvents.map((event) => event.sportKey));
-  const fixed = sportOptions.filter((item) => availableKeys.has(item.value) || state.allEvents.length === 0);
+  const fixed = sportOptions.filter((item) => item.value === "all" || availableKeys.has(item.value) || state.allEvents.length === 0);
   elements.sportTabs.innerHTML = fixed
     .map(
       (item) => `
       <button type="button" class="${state.sportKey === item.value ? "active" : ""}" data-sport-key="${escapeHtml(item.value)}" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
-        <img src="${escapeHtml(item.logo)}" alt="${escapeHtml(item.label)}" />
-        <span class="visually-hidden">${escapeHtml(item.label)}</span>
+        ${item.logo ? `<img src="${escapeHtml(item.logo)}" alt="" />` : `<span class="filter-dot" aria-hidden="true"></span>`}
+        <span>${escapeHtml(item.label)}</span>
       </button>`
     )
     .join("");
@@ -605,6 +708,7 @@ function renderSportTabs() {
 
 function renderMatchCard(event) {
   const pick = event.prediction.pick;
+  const quality = pickQuality(event);
   const meters = probabilityRows(event);
   const compactStats = compactStatusStats(event);
   const footerText = liveFooterText(event);
@@ -637,6 +741,10 @@ function renderMatchCard(event) {
           <span>Probabilidades IA</span>
           <strong>${escapeHtml(event.status === "live" ? liveClockText(event) : eventStatusLabel(event))}</strong>
         </div>
+        <div class="quality-row">
+          <span class="quality-pill ${quality.recommendable ? "recommended" : "avoid"}">${escapeHtml(quality.quality)}</span>
+          <span>${quality.confidence}% conf.</span>
+        </div>
         ${meters
           .map(
             (meter) => `
@@ -651,6 +759,10 @@ function renderMatchCard(event) {
           </div>`
           )
           .join("")}
+        <div class="match-card-meta">
+          <span>Cuota min. ${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</span>
+          <span>Riesgo ${escapeHtml(quality.risk)}</span>
+        </div>
         <button class="compact-more" type="button">Ver mas &gt;</button>
       </div>
     </article>
@@ -811,6 +923,159 @@ function renderDailyPredictions() {
   : `<div class="empty-message">Busca mas eventos para ver predicciones del dia.</div>`;
 }
 
+function renderDailySpotlight() {
+  if (!elements.dailySpotlight) return;
+  const event = strictEvents()[0];
+  if (!event) {
+    elements.dailySpotlight.innerHTML = `
+      <article class="spotlight-card empty-spotlight">
+        <div>
+          <span class="source-badge">Pick destacado del dia</span>
+          <h2>Mejor esperar mejores oportunidades</h2>
+          <p>No hay picks que pasen los filtros de confianza, valor de cuota y datos disponibles.</p>
+        </div>
+      </article>`;
+    return;
+  }
+
+  const pick = event.prediction.pick;
+  const quality = pickQuality(event);
+  const scoreText = event.score ? `${event.score.home} - ${event.score.away}` : "VS";
+  elements.dailySpotlight.innerHTML = `
+    <article class="spotlight-card" data-event-id="${escapeHtml(event.id)}">
+      <div class="spotlight-main">
+        <div class="spotlight-meta">
+          <span class="source-badge">Pick destacado del dia</span>
+          <span>${escapeHtml(event.league)}</span>
+          ${event.status === "live" ? eventTimeHtml(event) : `<span>${escapeHtml(formatTime(event.commenceTime))}</span>`}
+        </div>
+        <div class="spotlight-match">
+          <div>
+            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+            <strong>${escapeHtml(event.homeTeam)}</strong>
+          </div>
+          <span>${escapeHtml(scoreText)}</span>
+          <div>
+            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+            <strong>${escapeHtml(event.awayTeam)}</strong>
+          </div>
+        </div>
+        <div class="spotlight-pick">
+          <span>${escapeHtml(quality.quality)}</span>
+          <strong>${escapeHtml(pickSubtitle(event))}</strong>
+          <p>${escapeHtml(quickAnalysisReasons(event)[0])}</p>
+        </div>
+      </div>
+      <div class="spotlight-side">
+        <div class="spotlight-metric">
+          <span>Confianza</span>
+          <strong>${quality.confidence}%</strong>
+        </div>
+        <div class="spotlight-metric">
+          <span>Cuota minima</span>
+          <strong>${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</strong>
+        </div>
+        <div class="spotlight-metric">
+          <span>Unidades</span>
+          <strong>${quality.units.toFixed(2)}u</strong>
+        </div>
+        <button class="spotlight-button" type="button" id="spotlightDetailButton">Ver analisis completo</button>
+      </div>
+    </article>`;
+
+  attachLogoFallback(elements.dailySpotlight);
+  elements.dailySpotlight.querySelector("#spotlightDetailButton")?.addEventListener("click", (eventClick) => {
+    eventClick.stopPropagation();
+    openMatchDetail(event.id);
+  });
+  elements.dailySpotlight.querySelector("[data-event-id]")?.addEventListener("click", () => openMatchDetail(event.id));
+}
+
+function performanceSeries(events) {
+  const closed = sortDiscoveryEvents(events.filter((event) => actualOutcomeKey(event))).slice(-12);
+  let running = 0;
+  const values = closed.map((event) => {
+    running += pickWon(event) ? Number(event.prediction?.pick?.bestOdds || 1) - 1 : -1;
+    return running;
+  });
+  if (!values.length) return [];
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 1);
+  return values.map((value, index) => {
+    const x = values.length === 1 ? 100 : (index / (values.length - 1)) * 100;
+    const y = 100 - ((value - min) / Math.max(1, max - min)) * 78 - 10;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+}
+
+function renderRecentPickItem(event) {
+  const pick = event.prediction.pick;
+  const quality = pickQuality(event);
+  const actual = actualOutcomeKey(event);
+  const result =
+    event.status === "live"
+      ? `<span class="result-live">LIVE</span>`
+      : actual
+        ? `<span class="${pickWon(event) ? "result-win" : "result-loss"}">${pickWon(event) ? "Ganado" : "Perdido"}</span>`
+        : `<span>${escapeHtml(eventStatusLabel(event))}</span>`;
+  return `
+    <div class="recent-pick-row" data-event-id="${escapeHtml(event.id)}">
+      <span>${escapeHtml(displaySportName(event))}</span>
+      <strong>${escapeHtml(pick.label)}</strong>
+      <small>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</small>
+      <em>${formatOdds(pick.bestOdds)}</em>
+      <b>${quality.confidence}%</b>
+      ${result}
+    </div>`;
+}
+
+function renderPerformancePanels() {
+  const allowedEvents = sourceEvents().filter(isAllowedSport);
+  const metrics = pickHistoryMetrics(settledPickEvents(isAllowedSport));
+  const strict = strictEvents();
+  const precision = metrics.total ? Math.round((metrics.hits / metrics.total) * 100) : (state.payload?.summary?.averageConfidence || 0);
+  const currentStreak = settledPickEvents(isAllowedSport)
+    .slice()
+    .sort((a, b) => new Date(b.commenceTime).getTime() - new Date(a.commenceTime).getTime())
+    .reduce((streak, event) => (streak.done ? streak : pickWon(event) ? { count: streak.count + 1, done: false } : { count: streak.count, done: true }), { count: 0, done: false }).count;
+  const points = performanceSeries(settledPickEvents(isAllowedSport));
+  const recent = sortDiscoveryEvents([...strict, ...allowedEvents.filter((event) => actualOutcomeKey(event))]).slice(0, 5);
+
+  if (elements.performancePanel) {
+    elements.performancePanel.innerHTML = `
+      <div class="panel-title">
+        <span>Rendimiento general</span>
+        <strong>Ultimos 30 dias</strong>
+      </div>
+      <div class="performance-grid">
+        <div><span>Precision</span><strong>${precision}%</strong><small>${metrics.total ? "Con marcadores finales" : "Confianza promedio"}</small></div>
+        <div><span>Total de picks</span><strong>${metrics.total || strict.length}</strong><small>${metrics.total ? "Cerrados" : "Recomendables"}</small></div>
+        <div><span>Beneficio</span><strong>${formatUnits(metrics.units)}</strong><small>Unidades</small></div>
+        <div><span>Racha actual</span><strong>${currentStreak}</strong><small>Picks ganadores</small></div>
+      </div>
+      <div class="performance-chart">
+        ${
+          points.length
+            ? `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.join(" ")}"></polyline></svg>`
+            : `<div class="empty-chart">Sin historial cerrado suficiente</div>`
+        }
+      </div>`;
+  }
+
+  if (elements.latestPicksPanel) {
+    elements.latestPicksPanel.innerHTML = `
+      <div class="panel-title">
+        <span>Ultimos picks</span>
+        <button class="text-button mini-link" type="button" id="latestPicksButton">Ver todos</button>
+      </div>
+      <div class="recent-picks-list">
+        ${recent.length ? recent.map(renderRecentPickItem).join("") : `<div class="empty-message">Aun no hay picks recomendables.</div>`}
+      </div>`;
+    bindEventCards(elements.latestPicksPanel);
+    elements.latestPicksPanel.querySelector("#latestPicksButton")?.addEventListener("click", () => showView("featured"));
+  }
+}
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -835,14 +1100,18 @@ function withBookmakerLeg(event, leg, index) {
   if (bookmaker.book === "best") {
     return {
       ...leg,
-      book: leg.bestBook || event.prediction?.pick?.bestBook || "Mejor disponible"
+      book: leg.bestBook || event.prediction?.pick?.bestBook || "Mejor disponible",
+      estimated: false
     };
   }
 
+  const hasBookOdds = rowMatchesBook(event?.prediction?.pick?.bestBook || event?.prediction?.pick?.book || "", bookmaker.book)
+    || (event?.markets?.h2h || []).some((row) => rowMatchesBook(row, bookmaker.book));
   return {
     ...leg,
     odds: adjustedBookOdds(leg.odds, bookmaker.book, `${leg.market}-${leg.selection}-${index}`, event.id),
-    book: `${bookmaker.name} ref.`
+    book: hasBookOdds ? bookmaker.name : `${bookmaker.name} estimada`,
+    estimated: !hasBookOdds
   };
 }
 
@@ -853,8 +1122,15 @@ function parlayLegPool(event) {
   const baseConfidence = clamp(pick.confidence || 60, 56, 88);
   const pickSide = pick.label;
   const favoritePlus = `${pickSide} +1.5`;
+  const baseLeg = {
+    eventId: event.id,
+    sportKey: event.sportKey,
+    sport: displaySportName(event),
+    dataScore: availableDataScore(event)
+  };
   const pool = [
     {
+      ...baseLeg,
       market: "Ganador del partido",
       selection: `${pickSide} gana`,
       eventName,
@@ -882,6 +1158,7 @@ function parlayLegPool(event) {
     mlbMarkets.forEach((item, index) => {
       const confidence = confidenceForMarket(event, item.seed, item.base);
       pool.push({
+        ...baseLeg,
         market: item.market,
         selection: item.selection,
         eventName,
@@ -911,6 +1188,7 @@ function parlayLegPool(event) {
   soccerMarkets.forEach((item, index) => {
     const confidence = confidenceForMarket(event, item.seed, item.base);
     pool.push({
+      ...baseLeg,
       market: item.market,
       selection: item.selection,
       eventName,
@@ -922,18 +1200,65 @@ function parlayLegPool(event) {
   return pool;
 }
 
-function chooseParlayLegs(event, maxLegs = 5) {
+const parlayProfiles = {
+  conservador: {
+    label: "Conservador",
+    minSelections: 2,
+    maxSelections: 2,
+    minConfidence: 73,
+    maxOdds: 2.15,
+    risk: "Bajo",
+    units: 0.75,
+    note: "Menor riesgo, maximo 2 selecciones de alta confianza."
+  },
+  balanceado: {
+    label: "Balanceado",
+    minSelections: 2,
+    maxSelections: 3,
+    minConfidence: 68,
+    maxOdds: 2.45,
+    risk: "Medio",
+    units: 0.5,
+    note: "Cuota total moderada con picks de confianza media/alta."
+  },
+  agresivo: {
+    label: "Agresivo",
+    minSelections: 3,
+    maxSelections: 5,
+    minConfidence: 65,
+    maxOdds: 3.1,
+    risk: "Alto",
+    units: 0.25,
+    note: "Mayor riesgo. No recomendado para stake grande."
+  }
+};
+
+function eventMarketIsOpen(event) {
+  const status = String(event?.status || "").toLowerCase();
+  return !["final", "finished", "completed", "ended", "cancelled", "canceled", "postponed", "suspended"].includes(status);
+}
+
+function legQualifies(event, leg, profile) {
+  const quality = pickQuality(event);
+  if (!quality.recommendable || !eventMarketIsOpen(event)) return false;
+  if (quality.dataScore < 0.58 || leg.dataScore < 0.58) return false;
+  if ((leg.confidence || 0) < profile.minConfidence) return false;
+  if (!Number.isFinite(Number(leg.odds)) || Number(leg.odds) < 1.18) return false;
+  if (profile.maxOdds && Number(leg.odds) > profile.maxOdds) return false;
+  if (quality.minOdds && Number(leg.odds) < quality.minOdds * 0.92) return false;
+  return true;
+}
+
+function chooseParlayLegs(event, maxLegs = 5, profile = parlayProfiles.balanceado) {
+  const activeProfile = typeof profile === "string" ? parlayProfiles[profile] || parlayProfiles.balanceado : profile;
   const pool = parlayLegPool(event)
     .sort((a, b) => {
       const confidenceDelta = b.confidence - a.confidence;
       if (confidenceDelta) return confidenceDelta;
       return deterministicRatio(`${event.id}-${a.market}`) - deterministicRatio(`${event.id}-${b.market}`);
     });
-  const minimumConfidence = event.prediction?.pick?.strictSignal ? 74 : 70;
-  const filteredPool = pool.filter((leg) => leg.confidence >= minimumConfidence);
-  const candidatePool = filteredPool.length >= 3 ? filteredPool : pool.slice(0, 3);
-  const highConfidence = candidatePool.filter((leg) => leg.confidence >= 76).length;
-  const targetCount = Math.min(maxLegs, highConfidence >= 5 ? 5 : highConfidence >= 4 ? 4 : 3, candidatePool.length);
+  const candidatePool = pool.filter((leg) => legQualifies(event, leg, activeProfile));
+  const targetCount = Math.min(maxLegs, activeProfile.maxSelections || maxLegs, candidatePool.length);
   return candidatePool
     .slice(0, targetCount)
     .sort((a, b) => b.confidence - a.confidence)
@@ -941,20 +1266,21 @@ function chooseParlayLegs(event, maxLegs = 5) {
 }
 
 function parlayLegForEvent(event, index) {
-  const legs = chooseParlayLegs(event, 5);
-  return legs[index % legs.length];
+  const legs = chooseParlayLegs(event, 5, parlayProfiles.agresivo);
+  return legs.length ? legs[index % legs.length] : null;
 }
 
 function buildParlayTicket(sportKey, label) {
+  const profile = parlayProfiles.balanceado;
   const candidates = strictEvents()
-    .filter((event) => event.sportKey === sportKey && event.prediction?.pick?.bestOdds)
+    .filter((event) => event.sportKey === sportKey && event.prediction?.pick?.bestOdds && eventMarketIsOpen(event))
     .slice(0, 6);
   if (!candidates.length) return null;
 
-  const desiredCount = Math.min(5, Math.max(3, candidates.length));
-  const primaryLegs = candidates.map((event) => chooseParlayLegs(event, 3)[0]).filter(Boolean);
+  const desiredCount = Math.min(profile.maxSelections, Math.max(profile.minSelections, candidates.length));
+  const primaryLegs = candidates.map((event) => chooseParlayLegs(event, 1, profile)[0]).filter(Boolean);
   const extraLegs = candidates
-    .flatMap((event) => chooseParlayLegs(event, 5).slice(1))
+    .flatMap((event) => chooseParlayLegs(event, 5, profile).slice(1))
     .sort((a, b) => b.confidence - a.confidence);
   const legs = [];
   const seen = new Set();
@@ -965,31 +1291,99 @@ function buildParlayTicket(sportKey, label) {
       legs.push(leg);
     }
   });
+  if (legs.length < profile.minSelections) return null;
   const combined = legs.reduce((total, leg) => total * (leg.odds || 1), 1);
-  const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length);
-  return { label, legs, combined, confidence, bookName: selectedBookmakerName() };
+  const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length - Math.max(0, legs.length - 1) * 2);
+  return {
+    label,
+    type: profile.label,
+    risk: profile.risk,
+    units: profile.units,
+    stake: state.parlayStake,
+    legs,
+    combined,
+    confidence,
+    bookName: selectedBookmakerName(),
+    estimatedOdds: legs.some((leg) => leg.estimated)
+  };
 }
 
 function buildSingleEventParlay(event) {
   if (!event?.prediction?.pick) return null;
-  const legs = chooseParlayLegs(event, 5);
+  const legs = chooseParlayLegs(event, 5, parlayProfiles.agresivo);
+  if (legs.length < 2) return null;
   const combined = legs.reduce((total, leg) => total * (leg.odds || 1), 1);
-  const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length);
+  const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length - Math.max(0, legs.length - 1) * 3);
   return {
     label: `${event.homeTeam} vs ${event.awayTeam}`,
+    type: "Evento",
+    risk: "Alto",
+    units: 0.25,
+    stake: state.parlayStake,
     legs,
     combined,
     confidence,
-    bookName: selectedBookmakerName()
+    bookName: selectedBookmakerName(),
+    estimatedOdds: legs.some((leg) => leg.estimated),
+    warning: "Este parlay pertenece al mismo partido y puede tener correlacion alta."
+  };
+}
+
+function buildConstructedParlay(profileKey = state.parlayType) {
+  const profile = parlayProfiles[profileKey] || parlayProfiles.conservador;
+  const candidates = strictEvents()
+    .filter((event) => eventMarketIsOpen(event))
+    .flatMap((event) => chooseParlayLegs(event, 1, profile))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const confidenceDelta = b.confidence - a.confidence;
+      if (confidenceDelta) return confidenceDelta;
+      return a.odds - b.odds;
+    });
+  const legs = [];
+  const seenEvents = new Set();
+  candidates.forEach((leg) => {
+    if (legs.length >= profile.maxSelections) return;
+    if (seenEvents.has(leg.eventId)) return;
+    seenEvents.add(leg.eventId);
+    legs.push(leg);
+  });
+
+  if (legs.length < profile.minSelections) {
+    return { empty: true, profile, reason: "No hay parlays recomendados por ahora. Mejor esperar mejores oportunidades." };
+  }
+
+  const combined = legs.reduce((total, leg) => total * (leg.odds || 1), 1);
+  const confidence = Math.round(legs.reduce((total, leg) => total + leg.confidence, 0) / legs.length - Math.max(0, legs.length - 1) * 2);
+  return {
+    label: "Parlay del dia",
+    type: profile.label,
+    risk: profile.risk,
+    units: profile.units,
+    stake: state.parlayStake,
+    legs,
+    combined,
+    confidence,
+    bookName: selectedBookmakerName(),
+    estimatedOdds: legs.some((leg) => leg.estimated),
+    warning: profile.risk === "Alto" ? "Este parlay tiene riesgo alto. No recomendado para stake grande." : ""
   };
 }
 
 function renderParlayTicket(ticket, extraClass = "") {
+  if (!ticket || ticket.empty) {
+    return `<div class="empty-message">${escapeHtml(ticket?.reason || "No hay parlays recomendados por ahora. Mejor esperar mejores oportunidades.")}</div>`;
+  }
+  const potentialGain = ticket.stake && ticket.combined ? Math.max(0, ticket.stake * ticket.combined - ticket.stake) : 0;
+  const copyText = ticket.legs
+    .map((leg) => `${leg.sport || ""} ${leg.eventName}: ${leg.market} - ${leg.selection} (${formatOdds(leg.odds)})`)
+    .join(" | ");
   return `
-    <article class="parlay-ticket ${escapeHtml(extraClass)}">
+    <article class="parlay-ticket ${escapeHtml(extraClass)} risk-${escapeHtml(String(ticket.risk || "medio").toLowerCase())}">
       <div class="parlay-head">
-        <span class="source-badge">${escapeHtml(ticket.label)}</span>
-        <strong>${ticket.legs.length} selecciones - ${ticket.confidence}% confianza IA - ${escapeHtml(ticket.bookName || selectedBookmakerName())}</strong>
+        <span class="source-badge">${escapeHtml(ticket.bookName || selectedBookmakerName())}</span>
+        <strong>${escapeHtml(ticket.label)} - ${escapeHtml(ticket.type || "Balanceado")}</strong>
+        <small>${ticket.legs.length} selecciones - ${ticket.confidence}% confianza estimada - Riesgo ${escapeHtml(ticket.risk || "Medio")}</small>
       </div>
       ${ticket.legs
         .map(
@@ -998,15 +1392,22 @@ function renderParlayTicket(ticket, extraClass = "") {
           <span class="check-dot"><span aria-hidden="true">v</span></span>
           <div>
             <strong>${escapeHtml(leg.market)} - ${escapeHtml(leg.selection)}</strong>
-            <span>${escapeHtml(leg.eventName)} - ${escapeHtml(leg.book || ticket.bookName || selectedBookmakerName())}</span>
+            <span>${escapeHtml(leg.sport || "Deporte")} - ${escapeHtml(leg.eventName)} - ${escapeHtml(leg.book || ticket.bookName || selectedBookmakerName())}</span>
           </div>
-          <em>${formatOdds(leg.odds)}</em>
+          <em>${formatOdds(leg.odds)} <small>${Math.round(leg.confidence)}%</small></em>
         </div>`
         )
         .join("")}
-      <div class="combo-note">
-        <span>Momio combinado IA</span>
-        <strong>${state.settings.oddsFormat === "american" ? formatOdds(ticket.combined) : `${ticket.combined.toFixed(2)}x`}</strong>
+      <div class="parlay-summary-grid">
+        <div><span>Cuota total</span><strong>${state.settings.oddsFormat === "american" ? formatOdds(ticket.combined) : `${ticket.combined.toFixed(2)}x`}</strong></div>
+        <div><span>Unidades</span><strong>${Number(ticket.units || 0).toFixed(2)}u</strong></div>
+        <div><span>Ganancia pot.</span><strong>$${potentialGain.toFixed(0)}</strong></div>
+      </div>
+      ${ticket.estimatedOdds ? `<p class="parlay-warning">Cuotas no disponibles para esta casa. Se usaran cuotas estimadas.</p>` : ""}
+      ${ticket.warning ? `<p class="parlay-warning danger">${escapeHtml(ticket.warning)}</p>` : ""}
+      <div class="parlay-actions">
+        <button class="text-button parlay-detail-button" type="button" data-event-id="${escapeHtml(ticket.legs[0]?.eventId || "")}">Ver detalle</button>
+        <button class="text-button parlay-copy-button" type="button" data-copy="${escapeHtml(copyText)}">Copiar parlay</button>
       </div>
       <p class="parlay-disclaimer">Parlay sugerido por probabilidad. No garantiza acierto ni ganancia.</p>
     </article>`;
@@ -1034,43 +1435,88 @@ function renderCombinations() {
 }
 
 function dailyParlayTickets() {
-  return [
-    buildParlayTicket("soccer_fifa_world_cup", "Copa Mundial"),
-    buildParlayTicket("baseball_mlb", "MLB")
-  ].filter(Boolean);
+  const ticket = buildConstructedParlay(state.parlayType);
+  return ticket && !ticket.empty ? [ticket] : [];
 }
 
 function renderDailyParlayPage() {
   if (!elements.dailyParlayContent) return;
-  const tickets = dailyParlayTickets();
+  const profile = parlayProfiles[state.parlayType] || parlayProfiles.conservador;
+  const ticket = buildConstructedParlay(state.parlayType);
   elements.dailyParlayContent.innerHTML = `
     <div class="detail-actions">
       <button class="text-button detail-back" id="dailyParlayBackButton" type="button">Volver a inicio</button>
-      <span class="source-badge">IA en vivo</span>
+      <span class="source-badge">${escapeHtml(selectedBookmakerName())}</span>
     </div>
     <section class="profile-hero daily-parlay-hero">
       <span class="ai-pill"><span class="live-dot"></span> Parlay del dia</span>
-      <h1>Parlays generados por IA</h1>
-      <p>Combinaciones ajustadas a ${escapeHtml(selectedBookmakerName())} con mercados como ganador del partido, goles/carreras totales, ambos anotan, corners, linea de carreras, hits y ponches.</p>
+      <h1>Constructor de parlays</h1>
+      <p>Combinaciones estrictas para Futbol y MLB segun la casa elegida. Prefiere menos selecciones cuando el valor no es claro.</p>
     </section>
+    <article class="parlay-builder-panel">
+      <label>
+        <span>Casa de apuestas</span>
+        <select id="parlayBookmakerSelect">
+          ${mexicanBooks.map((book) => `<option value="${escapeHtml(book.book)}" ${selectedBookmaker().book === book.book ? "selected" : ""}>${escapeHtml(book.name)}</option>`).join("")}
+        </select>
+      </label>
+      <div class="parlay-type-tabs" role="group" aria-label="Tipo de parlay">
+        ${Object.entries(parlayProfiles).map(([key, item]) => `<button type="button" data-parlay-type="${escapeHtml(key)}" class="${key === state.parlayType ? "active" : ""}">${escapeHtml(item.label)}</button>`).join("")}
+      </div>
+      <label>
+        <span>Monto para calcular ganancia</span>
+        <input id="parlayStakeInput" type="number" min="10" step="10" value="${Number(state.parlayStake || 100)}" />
+      </label>
+      <p>${escapeHtml(profile.note)}</p>
+    </article>
     <article class="predictions-card single-parlay-card">
       <div class="predictions-header">
         <div class="predictions-icon"><span aria-hidden="true">P</span></div>
         <div>
           <h2>Parlay del dia</h2>
-          <p>Actualizado con los eventos disponibles. No garantiza resultado.</p>
+          <p>Filtrado por confianza, cuota minima, mercado abierto y datos disponibles.</p>
         </div>
       </div>
       <div class="predictions-list">
         ${
-          tickets.length
-            ? tickets.map((ticket) => renderParlayTicket(ticket, "daily-page-parlay")).join("")
-            : `<div class="empty-message">Aun no hay suficientes partidos para generar el parlay del dia.</div>`
+          ticket && !ticket.empty
+            ? renderParlayTicket(ticket, "daily-page-parlay")
+            : renderParlayTicket(ticket, "daily-page-parlay")
         }
       </div>
     </article>`;
 
   document.querySelector("#dailyParlayBackButton")?.addEventListener("click", () => showView("home"));
+  document.querySelector("#parlayBookmakerSelect")?.addEventListener("change", (event) => {
+    state.settings.bookmaker = event.target.value;
+    saveBookmaker(event.target.value).catch(() => renderDailyParlayPage());
+    renderDailyParlayPage();
+  });
+  document.querySelectorAll("[data-parlay-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.parlayType = button.dataset.parlayType || "conservador";
+      renderDailyParlayPage();
+    });
+  });
+  document.querySelector("#parlayStakeInput")?.addEventListener("input", (event) => {
+    state.parlayStake = Math.max(10, Number(event.target.value || 100));
+    renderDailyParlayPage();
+  });
+  elements.dailyParlayContent.querySelectorAll(".parlay-detail-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.eventId) openMatchDetail(button.dataset.eventId);
+    });
+  });
+  elements.dailyParlayContent.querySelectorAll(".parlay-copy-button").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copy || "");
+        button.textContent = "Copiado";
+      } catch {
+        button.textContent = "No se pudo copiar";
+      }
+    });
+  });
 }
 
 function actualOutcomeKey(event) {
@@ -1247,6 +1693,7 @@ function detailStatsRows(event) {
 
 function renderProDetailPanel(event) {
   const pick = event.prediction.pick;
+  const quality = pickQuality(event);
   const similarHistory = settledPickEvents(
     (item) => item.sportKey === event.sportKey && item.prediction?.pick?.key === pick.key
   );
@@ -1261,23 +1708,23 @@ function renderProDetailPanel(event) {
           <strong>${escapeHtml(pick.label)}</strong>
           <small>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</small>
         </div>
-        <em>${escapeHtml(confidenceTier(pick.confidence))}</em>
+        <em>${escapeHtml(quality.quality)}</em>
       </div>
       <div class="pro-info-grid">
         <div>
           <span>Confianza</span>
-          <strong>${escapeHtml(confidenceTier(pick.confidence))}</strong>
-          <small>${pick.confidence}% estimado</small>
+          <strong>${escapeHtml(confidenceTier(quality.confidence))}</strong>
+          <small>${quality.confidence}% estimado</small>
         </div>
         <div>
           <span>Cuota recomendada</span>
-          <strong>${escapeHtml(recommendedOddsText(pick))}</strong>
+          <strong>${escapeHtml(quality.minOdds ? `${formatOdds(quality.minOdds)} o mejor` : recommendedOddsText(pick))}</strong>
           <small>${escapeHtml(selectedBookmakerName())}</small>
         </div>
         <div>
           <span>Riesgo</span>
-          <strong>${escapeHtml(riskTier(pick.risk))}</strong>
-          <small>${escapeHtml(pick.recommendation || "Controlar stake")}</small>
+          <strong>${escapeHtml(quality.risk)}</strong>
+          <small>${quality.units.toFixed(2)}u sugeridas</small>
         </div>
         <div>
           <span>Resultado historico</span>
@@ -1289,7 +1736,7 @@ function renderProDetailPanel(event) {
         <section>
           <h3>Analisis rapido</h3>
           <ul>
-            ${quickAnalysisReasons(event).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+            ${[...quality.reasons, `Riesgo: ${quality.risks}`].slice(0, 4).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
           </ul>
         </section>
         <section>
@@ -1447,7 +1894,7 @@ function renderSourcesPage() {
     <section class="profile-hero page-hero">
       <span class="ai-pill"><span class="live-dot"></span> Fuentes de cuotas</span>
       <h1>Elige tu casa de apuestas</h1>
-      <p>La app mostrara momios de referencia segun la fuente seleccionada: Draftea, Playdoit, Caliente.mx, Codere o Bet350.</p>
+      <p>La app mostrara momios de referencia segun la fuente seleccionada: Draftea, Playdoit, Caliente, Bet365, Codere u Otra.</p>
     </section>
     <div class="platform-grid page-grid" id="sourcesPageGrid"></div>`;
 
@@ -1456,7 +1903,7 @@ function renderSourcesPage() {
 }
 
 function sourceEvents() {
-  return state.allEvents.length ? state.allEvents : state.events;
+  return (state.allEvents.length ? state.allEvents : state.events).filter(isAllowedSport);
 }
 
 function sortDiscoveryEvents(events) {
@@ -1659,6 +2106,7 @@ function renderAnalysis() {
   }
 
   const pick = event.prediction.pick;
+  const quality = pickQuality(event);
   elements.analysisCard.innerHTML = `
     <h2>Analisis IA</h2>
     <p class="analysis-pick">${escapeHtml(pick.label)} - ${formatPercent(pick.probability)}</p>
@@ -1666,19 +2114,19 @@ function renderAnalysis() {
     <div class="analysis-grid">
       <div>
         <span>Confianza</span>
-        <strong>${pick.confidence}%</strong>
+        <strong>${quality.confidence}%</strong>
       </div>
       <div>
-        <span>Edge</span>
-        <strong>${formatSignedPercent(pick.edge)}</strong>
+        <span>Calidad</span>
+        <strong>${escapeHtml(quality.quality)}</strong>
       </div>
       <div>
         <span>Riesgo</span>
-        <strong>${escapeHtml(pick.risk)}</strong>
+        <strong>${escapeHtml(quality.risk)}</strong>
       </div>
     </div>
     <ul class="reason-list">
-      ${pick.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+      ${[...quality.reasons, `Factor de riesgo: ${quality.risks}`].map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
     </ul>
   `;
 }
@@ -1861,6 +2309,8 @@ function render() {
   renderStatus();
   renderSportTabs();
   renderMatches();
+  renderDailySpotlight();
+  renderPerformancePanels();
   renderPlatforms();
   renderFeatured();
   renderDailyPredictions();
@@ -2046,23 +2496,32 @@ function bindEvents() {
       render();
     });
   });
+  document.querySelectorAll(".bottom-nav-shell [data-nav-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const targetId = button.dataset.navTarget;
+      showView("home");
+      render();
+      window.setTimeout(() => {
+        document.querySelector(`#${targetId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    });
+  });
   window.addEventListener("popstate", routeFromHash);
   setupPullToRefresh();
 }
 
 async function init() {
   try {
-    setLaunchLoading();
+    document.body.classList.add("app-entered");
+    document.body.classList.remove("app-booting", "launch-ready");
     await loadSession();
     bindEvents();
     setupStream();
     await fetchEvents();
     routeFromHash();
-    setLaunchReady();
   } catch (error) {
     if (error.message !== "Sesion requerida") {
       elements.liveMatches.innerHTML = `<div class="empty-message">${escapeHtml(error.message)}</div>`;
-      setLaunchReady();
     }
   }
 }
