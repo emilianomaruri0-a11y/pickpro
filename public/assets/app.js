@@ -152,19 +152,48 @@ setupViews();
 
 const allowedSportKeys = new Set(["soccer_fifa_world_cup", "baseball_mlb"]);
 
+function isEstimatedEvent(event) {
+  const sourceText = [
+    event?.dataSource,
+    event?.provider,
+    event?.feedMode,
+    event?.source,
+    event?.sourceType
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return Boolean(
+    event?.isDemo ||
+    event?.demo ||
+    event?.mock ||
+    event?.fallback ||
+    sourceText.includes("demo") ||
+    sourceText.includes("mock") ||
+    sourceText.includes("fallback") ||
+    sourceText.includes("estimado") ||
+    sourceText.includes("estimated")
+  );
+}
+
+function isRealAllowedEvent(event) {
+  return isAllowedSport(event) && !isEstimatedEvent(event);
+}
+
 const sportOptions = [
   { label: "Todos", value: "all", query: "Todos", logo: "" },
-  { label: "Futbol", value: "soccer_fifa_world_cup", query: "Futbol", logo: "/assets/league-worldcup-official.svg" },
+  { label: "Fútbol", value: "soccer_fifa_world_cup", query: "Fútbol", logo: "/assets/league-worldcup-official.svg" },
   { label: "MLB", value: "baseball_mlb", query: "MLB", logo: "/assets/league-mlb-official.svg" }
 ];
 
 const mexicanBooks = [
   { name: "Mejor disponible", subtitle: "Compara todas las fuentes", logo: "*", book: "best" },
-  { name: "Draftea", subtitle: "Referencia Mexico", logo: "D", book: "Draftea" },
-  { name: "Playdoit", subtitle: "Referencia Mexico", logo: "P", book: "Playdoit" },
-  { name: "Caliente", subtitle: "Referencia Mexico", logo: "C", book: "Caliente" },
-  { name: "Bet365", subtitle: "Referencia Mexico", logo: "B", book: "Bet365" },
-  { name: "Codere", subtitle: "Referencia Mexico", logo: "CO", book: "Codere" },
+  { name: "Draftea", subtitle: "Referencia México", logo: "D", book: "Draftea" },
+  { name: "Playdoit", subtitle: "Referencia México", logo: "P", book: "Playdoit" },
+  { name: "Caliente", subtitle: "Referencia México", logo: "C", book: "Caliente" },
+  { name: "Bet365", subtitle: "Referencia México", logo: "B", book: "Bet365" },
+  { name: "Codere", subtitle: "Referencia México", logo: "CO", book: "Codere" },
   { name: "Otra", subtitle: "Usar cuota estimada", logo: "+", book: "Otra" }
 ];
 
@@ -275,7 +304,7 @@ function eventTimeHtml(event) {
 function eventStatusLabel(event) {
   if (event.status === "live") return "En vivo";
   if (event.status === "final") return "Final";
-  return "Proximo";
+  return "Próximo";
 }
 
 function scoreSubline(event, pick) {
@@ -284,7 +313,7 @@ function scoreSubline(event, pick) {
     return `${liveClockText(event)} - ${source}`;
   }
   if (event.status === "final") return event.scoreSource || "Marcador final";
-  return `Prediccion: ${pick.label}`;
+  return `Predicción: ${pick.label}`;
 }
 
 function liveFooterText(event) {
@@ -422,7 +451,7 @@ function confidenceLabel(confidence) {
   if (confidence > 80) return "Pick fuerte";
   if (confidence >= 73) return "Alta confianza";
   if (confidence >= 65) return "Riesgo medio";
-  return "Evitar";
+  return "Sin pick recomendado";
 }
 
 function pickSubtitle(event) {
@@ -435,108 +464,430 @@ function impliedProbability(decimal) {
   return Number.isFinite(decimal) && decimal > 1 ? 1 / decimal : null;
 }
 
-function availableDataScore(event) {
-  let score = 0.66;
-  if (event?.prediction?.pick?.bestOdds) score += 0.12;
-  if ((event?.markets?.h2h || []).length) score += 0.08;
-  if (event?.score || event?.status === "upcoming") score += 0.05;
-  if (event?.dataSource && !String(event.dataSource).toLowerCase().includes("demo")) score += 0.04;
-  if (event?.sportKey === "baseball_mlb") score -= 0.05;
-  if (event?.sportKey === "soccer_fifa_world_cup") score -= 0.03;
-  return clamp(score, 0, 1);
+const pickDecisionConfig = {
+  minConfidence: 65,
+  highConfidence: 73,
+  strongConfidence: 81,
+  maxConfidence: 88,
+  minDataScore: 0.58,
+  valueMargins: {
+    conservador: 0.03,
+    normal: 0.05,
+    agresivo: 0.08
+  }
+};
+
+function decimalOdds(value) {
+  const odds = Number(value);
+  return Number.isFinite(odds) && odds > 1 ? odds : null;
 }
 
-function adjustedPickConfidence(event) {
-  const pick = event?.prediction?.pick || {};
-  let confidence = Number(pick.confidence || 0);
-  const dataScore = availableDataScore(event);
-  if (dataScore < 0.72) confidence -= Math.round((0.72 - dataScore) * 35);
-  if (!pick.bestOdds) confidence -= 10;
-  if (String(pick.risk || "").toLowerCase().includes("alto")) confidence -= 5;
-  if (pick.recommendation === "Vigilar") confidence -= 4;
-  return Math.round(clamp(confidence, 0, 88));
+function normalizeProbability(value) {
+  const probability = Number(value);
+  if (!Number.isFinite(probability) || probability <= 0) return null;
+  return probability > 1 ? probability / 100 : probability;
 }
 
-function pickValueEdge(event) {
-  const pick = event?.prediction?.pick || {};
-  if (Number.isFinite(pick.edge)) return pick.edge;
-  const implied = impliedProbability(Number(pick.bestOdds));
-  if (implied === null || !Number.isFinite(pick.probability)) return null;
-  return pick.probability - implied;
+function selectedOutcome(event, pick) {
+  return (event?.prediction?.outcomes || []).find((outcome) => outcome.key === pick?.key || outcome.label === pick?.label) || null;
 }
 
-function minimumRecommendedOdds(event) {
-  const odds = Number(event?.prediction?.pick?.bestOdds || 0);
-  if (!Number.isFinite(odds) || odds <= 1) return null;
-  return Math.max(1.2, odds * 0.96);
+function pickOdds(event, pick, oddsData = {}) {
+  const directOdds = decimalOdds(oddsData.odds ?? oddsData.bestOdds ?? pick?.bestOdds);
+  if (directOdds) return directOdds;
+  const outcome = selectedOutcome(event, pick);
+  const outcomeOdds = decimalOdds(outcome?.bestOdds);
+  if (outcomeOdds) return outcomeOdds;
+  const marketRow = Array.isArray(event?.prediction?.outcomes)
+    ? moneylineRows(event).find((row) => row.key === pick?.key)
+    : null;
+  return decimalOdds(marketRow?.odds);
 }
 
-function pickQuality(event) {
-  const pick = event?.prediction?.pick;
-  const confidence = adjustedPickConfidence(event);
-  const edge = pickValueEdge(event);
-  const dataScore = availableDataScore(event);
-  const hasOdds = Boolean(pick?.bestOdds);
-  let quality = "Sin datos suficientes";
-  let risk = "Medio";
-  let recommendable = false;
+function valueMarginForProfile(profile = "normal") {
+  const key = String(profile || "normal").toLowerCase();
+  if (key.includes("conservador") || key.includes("bajo")) return pickDecisionConfig.valueMargins.conservador;
+  if (key.includes("agresivo") || key.includes("alto")) return pickDecisionConfig.valueMargins.agresivo;
+  return pickDecisionConfig.valueMargins.normal;
+}
 
-  if (!isAllowedSport(event) || !pick || !hasOdds || dataScore < 0.58) {
-    quality = "Sin datos suficientes";
-    risk = "Alto";
-  } else if (confidence < 65 || edge !== null && edge < 0) {
-    quality = "Evitar";
-    risk = "Alto";
-  } else if (confidence > 80) {
-    quality = "Pick fuerte";
-    risk = "Bajo";
-    recommendable = true;
-  } else if (confidence >= 73) {
-    quality = "Pick con valor";
-    risk = "Bajo";
-    recommendable = true;
-  } else {
-    quality = "Riesgo medio";
-    risk = "Medio";
-    recommendable = true;
+function minimumOddsFromProbability(probability, margin = pickDecisionConfig.valueMargins.normal) {
+  const estimated = normalizeProbability(probability);
+  if (estimated === null || estimated <= margin) return null;
+  return Math.max(1.2, 1 / (estimated - margin));
+}
+
+function marketVolatility(event, pick) {
+  const marketOdds = (event?.markets?.h2h || [])
+    .map((row) => decimalOdds(row?.[pick?.key]) || decimalOdds(row?.odds))
+    .filter(Boolean);
+  if (marketOdds.length < 2) return Number(event?.prediction?.model?.volatility || event?.stats?.volatility || 0);
+  const min = Math.min(...marketOdds);
+  const max = Math.max(...marketOdds);
+  const average = marketOdds.reduce((sum, odds) => sum + odds, 0) / marketOdds.length;
+  return clamp((max - min) / Math.max(average, 1), 0, 0.45);
+}
+
+function pushReason(list, text) {
+  if (text && !list.includes(text)) list.push(text);
+}
+
+function dataCompletenessReport(event, pick, oddsData = {}) {
+  const stats = event?.stats || {};
+  const sportKey = event?.sportKey || "";
+  let score = 0.48;
+  let penalty = 0;
+  const missing = [];
+  const risks = [];
+
+  if (event?.homeTeam && event?.awayTeam) score += 0.08;
+  else {
+    penalty += 20;
+    missing.push("equipos");
   }
 
-  const sportReasons =
-    event?.sportKey === "baseball_mlb"
-      ? [
-          "Se pondera moneyline, run line y total de carreras frente a la cuota disponible.",
-          "Sin feed avanzado completo de pitcher, bullpen o lesiones, la confianza se ajusta a la baja.",
-          "El valor se mantiene solo si la cuota cumple el minimo recomendado."
-        ]
-      : [
-          "Se pondera forma reciente, local/visitante, promedio de goles y tendencia over/under cuando el feed lo permite.",
-          "Lesiones y alineaciones no confirmadas reducen la confianza del pick.",
-          "El pick se evita si la probabilidad real no supera con margen a la cuota ofrecida."
-        ];
+  if (event?.commenceTime) score += 0.04;
+  if (event?.score || event?.status === "upcoming" || event?.status === "live") score += 0.04;
+
+  if (pick?.label && Number.isFinite(Number(pick?.confidence))) score += 0.08;
+  else {
+    penalty += 18;
+    missing.push("pick base");
+  }
+
+  if (pickOdds(event, pick, oddsData)) score += 0.12;
+  else {
+    penalty += 16;
+    missing.push("cuota disponible");
+  }
+
+  if ((event?.markets?.h2h || []).length) score += 0.07;
+  else {
+    penalty += 8;
+    risks.push("Mercado sin comparacion amplia de casas.");
+  }
+
+  if (event?.dataSource && !isEstimatedEvent(event)) score += 0.05;
+  else {
+    penalty += isEstimatedEvent(event) ? 25 : 6;
+    risks.push(isEstimatedEvent(event) ? "Evento demo o estimado; no se debe usar como prediccion real." : "Fuente de datos limitada o estimada.");
+  }
+
+  const hasForm = Number.isFinite(Number(stats.homeForm)) && Number.isFinite(Number(stats.awayForm));
+  const hasAttack = Number.isFinite(Number(stats.homeAttack)) && Number.isFinite(Number(stats.awayAttack));
+  const hasDefense = Number.isFinite(Number(stats.homeDefense)) && Number.isFinite(Number(stats.awayDefense));
+  const hasVolatility = Number.isFinite(Number(stats.volatility));
+
+  if (hasForm) score += 0.07;
+  else {
+    penalty += 8;
+    risks.push("Faltan ultimos 5 partidos completos.");
+  }
+
+  if (hasAttack && hasDefense) score += 0.08;
+  else {
+    penalty += 8;
+    risks.push(sportKey === "baseball_mlb" ? "Faltan datos completos de ofensiva o pitcheo." : "Faltan goles a favor/en contra completos.");
+  }
+
+  if (hasVolatility) score += 0.04;
+
+  if (sportKey === "baseball_mlb") {
+    const pitcherFields = ["homePitcherEra", "awayPitcherEra", "homePitcherWhip", "awayPitcherWhip"];
+    const pitcherData = pitcherFields.some((field) => Number.isFinite(Number(stats[field])));
+    const bullpenData = Number.isFinite(Number(stats.homeBullpen)) || Number.isFinite(Number(stats.awayBullpen));
+    if (pitcherData) score += 0.04;
+    else {
+      penalty += 10;
+      risks.push("No hay feed completo de pitcher abridor, ERA o WHIP.");
+    }
+    if (bullpenData) score += 0.03;
+    else {
+      penalty += 6;
+      risks.push("Bullpen reciente no confirmado.");
+    }
+  }
+
+  if (sportKey === "soccer_fifa_world_cup") {
+    const trendData = Number.isFinite(Number(stats.homeOverRate)) || Number.isFinite(Number(stats.awayOverRate));
+    if (trendData) score += 0.03;
+    else risks.push("Tendencia over/under limitada.");
+  }
 
   return {
-    confidence,
-    edge,
-    dataScore,
-    quality,
-    risk,
-    recommendable,
-    minOdds: minimumRecommendedOdds(event),
-    units: confidence > 80 ? 1.25 : confidence >= 73 ? 1 : 0.5,
-    reasons: sportReasons,
-    risks:
-      dataScore < 0.78
-        ? "Datos avanzados incompletos; conviene esperar confirmacion de alineaciones, bajas o pitchers."
-        : "Cambios de ultima hora pueden mover el valor del mercado."
+    score: clamp(score - penalty / 100, 0, 1),
+    penalty,
+    missing,
+    risks,
+    missingImportant: missing.includes("equipos") || missing.includes("pick base") || missing.includes("cuota disponible")
   };
 }
 
-function isStrictPick(event) {
-  return pickQuality(event).recommendable;
+function confidenceFromSignals(pick, event, outcome, dataReport, volatility) {
+  const rawConfidence = Number(pick?.confidence);
+  const modelProbability = normalizeProbability(pick?.probability ?? outcome?.probability ?? pick?.estimatedProbability);
+  let confidence = Number.isFinite(rawConfidence) ? rawConfidence : (modelProbability || 0) * 100;
+
+  const probabilities = (event?.prediction?.outcomes || []).map((item) => normalizeProbability(item.probability)).filter((item) => item !== null);
+  const selected = normalizeProbability(outcome?.probability ?? pick?.probability);
+  if (selected !== null && probabilities.length > 1) {
+    const nextBest = probabilities.filter((item) => item !== selected).sort((a, b) => b - a)[0] || 0;
+    const gap = Math.max(0, selected - nextBest);
+    confidence += Math.min(8, gap * 45);
+  }
+
+  confidence -= dataReport.penalty;
+  if (volatility > 0.22) confidence -= 8;
+  if (String(pick?.risk || "").toLowerCase().includes("alto")) confidence -= 5;
+  if (pick?.recommendation === "Vigilar") confidence -= 4;
+  if (dataReport.score < 0.72) confidence -= Math.round((0.72 - dataReport.score) * 35);
+  return Math.round(clamp(confidence, 0, pickDecisionConfig.maxConfidence));
 }
 
-function strictEvents() {
-  return sortedEvents().filter(isStrictPick);
+function qualityForConfidence(confidence) {
+  if (confidence >= pickDecisionConfig.strongConfidence) return { qualityLabel: "Pick fuerte", riskLevel: "Bajo" };
+  if (confidence >= pickDecisionConfig.highConfidence) return { qualityLabel: "Alta confianza", riskLevel: "Bajo/Medio" };
+  if (confidence >= pickDecisionConfig.minConfidence) return { qualityLabel: "Riesgo medio", riskLevel: "Medio" };
+  return { qualityLabel: "Sin pick recomendado", riskLevel: "Alto" };
+}
+
+function suggestedUnitsForConfidence(confidence) {
+  if (confidence >= pickDecisionConfig.strongConfidence) return 1.25;
+  if (confidence >= pickDecisionConfig.highConfidence) return 0.75;
+  if (confidence >= pickDecisionConfig.minConfidence) return 0.35;
+  return 0;
+}
+
+function buildPickReasons(event, pick, outcome, edge, dataReport) {
+  const reasons = [];
+  (pick?.reasons || []).forEach((reason) => pushReason(reasons, reason));
+  const probability = normalizeProbability(pick?.probability ?? outcome?.probability);
+  if (probability !== null) pushReason(reasons, `${pick.label} queda en ${Math.round(probability * 100)}% de probabilidad estimada por el modelo.`);
+  if (edge !== null && Number.isFinite(edge)) {
+    pushReason(reasons, `La probabilidad estimada supera la probabilidad implicita por ${Math.round(edge * 100)} pts.`);
+  }
+  if (event?.sportKey === "baseball_mlb") {
+    pushReason(reasons, "Se cruzan moneyline, ofensiva reciente, local/visitante y disponibilidad de datos de pitcheo.");
+  } else {
+    pushReason(reasons, "Se cruzan forma reciente, local/visitante, goles a favor/en contra y tendencia over/under disponible.");
+  }
+  if (dataReport.score < 0.78) pushReason(reasons, "La confianza fue ajustada por datos incompletos antes de recomendar.");
+  return reasons.slice(0, 3);
+}
+
+function buildPickRisks(event, dataReport, volatility, valueEdge) {
+  const risks = [...dataReport.risks];
+  if (volatility > 0.22) pushReason(risks, "Mercado volatil: la cuota se movio demasiado entre fuentes.");
+  if (valueEdge !== null && valueEdge < pickDecisionConfig.valueMargins.normal) pushReason(risks, "La cuota no ofrece valor suficiente frente a la probabilidad estimada.");
+  if (event?.sportKey === "baseball_mlb") pushReason(risks, "Cambios de pitcher, bullpen o lineup pueden invalidar el valor.");
+  else pushReason(risks, "Alineaciones, bajas o rotaciones de ultimo momento pueden cambiar el escenario.");
+  return risks.slice(0, 4);
+}
+
+function evaluatePickQuality(pick, matchData, oddsData = {}, options = {}) {
+  const event = matchData || {};
+  const outcome = selectedOutcome(event, pick);
+  const odds = pickOdds(event, pick, oddsData);
+  const implied = impliedProbability(odds);
+  const estimatedProbability = normalizeProbability(pick?.probability ?? outcome?.probability ?? pick?.estimatedProbability);
+  const dataReport = dataCompletenessReport(event, pick, oddsData);
+  const volatility = marketVolatility(event, pick);
+  const margin = valueMarginForProfile(options.profile || "normal");
+  const valueEdge = implied !== null && estimatedProbability !== null ? estimatedProbability - implied : null;
+  const confidence = confidenceFromSignals(pick, event, outcome, dataReport, volatility);
+  const minimumOdds = minimumOddsFromProbability(estimatedProbability, margin);
+  let { qualityLabel, riskLevel } = qualityForConfidence(confidence);
+  let shouldRecommend = confidence >= pickDecisionConfig.minConfidence;
+  let decisionReason = "";
+
+  if (!isAllowedSport(event) || !pick) {
+    shouldRecommend = false;
+    qualityLabel = "Sin pick recomendado";
+    riskLevel = "Alto";
+    decisionReason = "Deporte no habilitado o pick base inexistente.";
+  } else if (isEstimatedEvent(event)) {
+    shouldRecommend = false;
+    qualityLabel = "Sin pick recomendado";
+    riskLevel = "Alto";
+    decisionReason = "Evento demo o estimado; esperando datos reales de la API.";
+  } else if (dataReport.missingImportant || dataReport.score < pickDecisionConfig.minDataScore) {
+    shouldRecommend = false;
+    qualityLabel = "Sin pick recomendado";
+    riskLevel = "Alto";
+    decisionReason = dataReport.missing.length
+      ? `Datos insuficientes: ${dataReport.missing.join(", ")}.`
+      : "Datos insuficientes para sostener una recomendacion.";
+  } else if (confidence < pickDecisionConfig.minConfidence) {
+    shouldRecommend = false;
+    qualityLabel = "Sin pick recomendado";
+    riskLevel = "Alto";
+    decisionReason = "La confianza estimada queda por debajo del minimo de 65%.";
+  } else if (valueEdge === null || valueEdge <= margin) {
+    shouldRecommend = false;
+    qualityLabel = "Evitar";
+    riskLevel = "Alto";
+    decisionReason = "La cuota no ofrece valor suficiente frente a la probabilidad estimada.";
+  }
+
+  const reasons = shouldRecommend
+    ? buildPickReasons(event, pick, outcome, valueEdge, dataReport)
+    : [decisionReason || "No hay ventaja clara para recomendar este pick."];
+  const risks = buildPickRisks(event, dataReport, volatility, valueEdge);
+  if (!shouldRecommend && decisionReason) pushReason(risks, decisionReason);
+
+  return {
+    confidence,
+    estimatedProbability,
+    impliedProbability: implied,
+    edge: valueEdge,
+    valueEdge,
+    dataScore: dataReport.score,
+    dataPenalty: dataReport.penalty,
+    qualityLabel,
+    quality: qualityLabel,
+    riskLevel,
+    risk: riskLevel,
+    shouldRecommend,
+    recommendable: shouldRecommend,
+    reasons,
+    risks,
+    riskSummary: risks.join(" "),
+    minimumOdds,
+    minOdds: minimumOdds,
+    suggestedUnits: suggestedUnitsForConfidence(confidence),
+    units: suggestedUnitsForConfidence(confidence),
+    decisionReason,
+    missingData: dataReport.missing,
+    valueMargin: margin
+  };
+}
+
+function availableDataScore(event) {
+  return dataCompletenessReport(event, event?.prediction?.pick || {}).score;
+}
+
+function adjustedPickConfidence(event) {
+  return evaluatePickQuality(event?.prediction?.pick || {}, event).confidence;
+}
+
+function pickValueEdge(event) {
+  return evaluatePickQuality(event?.prediction?.pick || {}, event).edge;
+}
+
+function minimumRecommendedOdds(event) {
+  return evaluatePickQuality(event?.prediction?.pick || {}, event).minimumOdds;
+}
+
+function pickQuality(event, options = {}) {
+  return evaluatePickQuality(event?.prediction?.pick || {}, event, {}, options);
+}
+
+function isStrictPick(event) {
+  return isRealAllowedEvent(event) && (pickQuality(event).shouldRecommend || Boolean(recommendedLegForEvent(event)));
+}
+
+function strictEvents(limit = 8, sourceEventsList = sortedEvents()) {
+  return sourceEventsList
+    .filter(isRealAllowedEvent)
+    .map((event) => {
+      const quality = pickQuality(event);
+      const leg = quality.shouldRecommend ? null : recommendedLegForEvent(event);
+      return { event, quality, leg, recommendation: recommendationForEvent(event, quality, leg) };
+    })
+    .filter(({ quality, leg }) => quality.shouldRecommend || Boolean(leg))
+    .sort((a, b) => {
+      const confidenceDelta = b.recommendation.confidence - a.recommendation.confidence;
+      if (confidenceDelta) return confidenceDelta;
+      return (b.recommendation.valueEdge || -1) - (a.recommendation.valueEdge || -1);
+    })
+    .slice(0, limit)
+    .map(({ event }) => event);
+}
+
+function nonRecommendedEvents(limit = 8, sourceEventsList = sortedEvents()) {
+  return sourceEventsList
+    .filter(isRealAllowedEvent)
+    .map((event) => ({ event, quality: pickQuality(event), leg: recommendedLegForEvent(event) }))
+    .filter(({ quality, leg }) => !quality.shouldRecommend && !leg)
+    .sort((a, b) => b.quality.confidence - a.quality.confidence)
+    .slice(0, limit);
+}
+
+function legValueEdge(leg, profile = parlayProfiles.balanceado) {
+  const odds = decimalOdds(leg?.odds);
+  const estimatedProbability = normalizeProbability((leg?.confidence || 0) / 100);
+  const implied = impliedProbability(odds);
+  if (estimatedProbability === null || implied === null) return null;
+  return estimatedProbability - implied - valueMarginForProfile(profile.risk);
+}
+
+function recommendedLegForEvent(event, profile = parlayProfiles.balanceado) {
+  if (!isRealAllowedEvent(event) || !event?.prediction?.pick || !eventMarketIsOpen(event)) return null;
+  return chooseParlayLegs(event, 1, profile)[0] || null;
+}
+
+function recommendationForEvent(event, quality = pickQuality(event), leg = null) {
+  if (quality.shouldRecommend) {
+    const pick = event.prediction.pick;
+    return {
+      type: "pick",
+      title: pickSubtitle(event),
+      subtitle: pick.label,
+      confidence: quality.confidence,
+      quality: quality.quality,
+      risk: quality.risk,
+      odds: pick.bestOdds,
+      minOdds: quality.minOdds,
+      units: quality.units,
+      reasons: quickAnalysisReasons(event),
+      valueEdge: quality.valueEdge
+    };
+  }
+
+  const recommendedLeg = leg || recommendedLegForEvent(event);
+  if (!recommendedLeg) {
+    return {
+      type: "none",
+      title: "Sin pick recomendado",
+      subtitle: quality.decisionReason || "No hay ventaja clara",
+      confidence: quality.confidence,
+      quality: quality.quality,
+      risk: quality.risk,
+      odds: null,
+      minOdds: null,
+      units: 0,
+      reasons: quality.risks || [],
+      valueEdge: quality.valueEdge
+    };
+  }
+
+  return {
+    type: "market",
+    title: `${recommendedLeg.market}: ${recommendedLeg.selection}`,
+    subtitle: recommendedLeg.selection,
+    confidence: recommendedLeg.confidence,
+    quality: confidenceLabel(recommendedLeg.confidence),
+    risk: recommendedLeg.confidence >= 73 ? "Medio" : "Alto",
+    odds: recommendedLeg.odds,
+    minOdds: recommendedLeg.odds,
+    units: suggestedUnitsForConfidence(recommendedLeg.confidence),
+    reasons: marketRecommendationReasons(event, recommendedLeg),
+    valueEdge: legValueEdge(recommendedLeg)
+  };
+}
+
+function marketRecommendationReasons(event, leg) {
+  const quality = pickQuality(event);
+  const reasons = [
+    `${leg.market} pasa el filtro minimo de ${leg.confidence}% de confianza estimada.`,
+    `La cuota ${formatOdds(leg.odds)} conserva valor frente a la probabilidad calculada.`,
+    `Se evita forzar el pick principal porque ${quality.decisionReason || "no tenia suficiente valor disponible"}.`
+  ];
+  return reasons.slice(0, 3);
+}
+
+function riskText(risks) {
+  return Array.isArray(risks) ? risks.join(" ") : String(risks || "");
 }
 
 function displayUsername(user = state.user || {}) {
@@ -588,7 +939,7 @@ async function fetchEvents() {
 }
 
 function applyPayload(payload) {
-  state.allEvents = (payload.events || []).filter(isAllowedSport);
+  state.allEvents = (payload.events || []).filter(isRealAllowedEvent);
   state.sports = payload.sports || [];
   if (state.sportKey !== "all" && !allowedSportKeys.has(state.sportKey)) {
     state.sportKey = "all";
@@ -618,12 +969,14 @@ function eventMatchesSearch(event, query) {
 }
 
 function buildClientSummary(events) {
+  const qualities = events.map((event) => pickQuality(event));
+  const recommended = qualities.filter((quality) => quality.shouldRecommend);
   return {
     totalEvents: events.length,
-    opportunities: events.filter(isStrictPick).length,
+    opportunities: recommended.length,
     liveEvents: events.filter((event) => event.status === "live").length,
-    averageConfidence: events.length
-      ? Math.round(events.reduce((sum, event) => sum + event.prediction.pick.confidence, 0) / events.length)
+    averageConfidence: recommended.length
+      ? Math.round(recommended.reduce((sum, quality) => sum + quality.confidence, 0) / recommended.length)
       : 0
   };
 }
@@ -632,7 +985,7 @@ function applyCurrentFilters(payload = state.payload) {
   const query = state.searchQuery.trim().toLowerCase();
   state.events = state.allEvents.filter((event) => {
     const sportMatches = state.sportKey === "all" || event.sportKey === state.sportKey;
-    return isAllowedSport(event) && sportMatches && eventMatchesSearch(event, query);
+    return isRealAllowedEvent(event) && sportMatches && eventMatchesSearch(event, query);
   });
   state.payload = {
     ...(payload || {}),
@@ -652,9 +1005,11 @@ function sortedEvents() {
   return [...state.events].sort((a, b) => {
     const liveDelta = Number(b.status === "live") - Number(a.status === "live");
     if (liveDelta) return liveDelta;
+    const qualityDelta = Number(isStrictPick(b)) - Number(isStrictPick(a));
+    if (qualityDelta) return qualityDelta;
     const timeDelta = new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime();
     if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta;
-    return b.prediction.pick.confidence - a.prediction.pick.confidence;
+    return pickQuality(b).confidence - pickQuality(a).confidence;
   });
 }
 
@@ -664,13 +1019,15 @@ function renderStatus() {
   const modeLabel =
     payload.feedMode === "live"
       ? "Datos en vivo"
-      : payload.feedMode === "demo-fallback"
-        ? "Demo por respaldo"
-        : "IA en vivo";
+      : payload.feedMode === "sin-api-real"
+        ? "Sin API real"
+        : payload.feedMode === "sin-eventos-reales"
+          ? "Sin eventos reales"
+          : "IA en vivo";
 
   elements.feedMode.textContent = modeLabel;
   elements.lastRefresh.textContent = formatRelative(payload.lastRefreshAt);
-  elements.statusDot.className = `status-light ${payload.feedMode === "live" || payload.feedMode === "demo" ? "live" : ""}`;
+  elements.statusDot.className = `status-light ${payload.feedMode === "live" ? "live" : ""}`;
   elements.totalEvents.textContent = summary.totalEvents || 0;
   elements.averageConfidence.textContent = `${summary.averageConfidence || 0}%`;
   elements.heroWinRate.textContent = `${summary.averageConfidence || 0}%`;
@@ -857,12 +1214,13 @@ function featuredCardsHtml(events) {
   return events.length
     ? events
         .map((event) => {
-          const pick = event.prediction.pick;
+          const quality = pickQuality(event);
+          const recommendation = recommendationForEvent(event, quality);
           return `
           <article class="featured-card" data-event-id="${escapeHtml(event.id)}">
             <div class="featured-head">
               <span class="featured-league">${escapeHtml(event.league)}</span>
-              <span class="confidence-pill ${pick.confidence < 70 ? "medium" : ""}">${confidenceLabel(pick.confidence)}</span>
+              <span class="confidence-pill ${recommendation.confidence < 73 ? "medium" : ""}">${escapeHtml(recommendation.quality)}</span>
             </div>
             <div class="featured-teams">
               <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
@@ -870,12 +1228,12 @@ function featuredCardsHtml(events) {
               <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
             </div>
             <h3 class="featured-title">${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</h3>
-            <p class="featured-subtitle">${escapeHtml(pickSubtitle(event))}</p>
+            <p class="featured-subtitle">${escapeHtml(recommendation.title)}</p>
             <div class="featured-bottom">
               <div>
-                <span class="featured-odd">${pick.bestOdds ? formatOdds(pick.bestOdds) : "--"}</span>
+                <span class="featured-odd">${recommendation.odds ? formatOdds(recommendation.odds) : "--"}</span>
               </div>
-              <button class="featured-button" type="button">Ver analisis</button>
+              <button class="featured-button" type="button">Ver análisis</button>
             </div>
           </article>
         `;
@@ -902,20 +1260,20 @@ function renderFeatured() {
 
 function renderDailyPredictions() {
   const picks = strictEvents()
-    .filter((event) => event.prediction.pick.bestOdds)
+    .filter((event) => recommendationForEvent(event).odds)
     .slice(0, 3);
   elements.dailyPredictionList.innerHTML = picks.length
     ? picks
         .map((event) => {
-          const pick = event.prediction.pick;
+          const recommendation = recommendationForEvent(event);
           return `
           <div class="odds-row">
             <span class="check-dot"><span aria-hidden="true">v</span></span>
             <div>
               <strong>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</strong>
-              <span>${escapeHtml(pickSubtitle(event))}</span>
+              <span>${escapeHtml(recommendation.title)}</span>
             </div>
-            <em>${formatOdds(pick.bestOdds)}</em>
+            <em>${formatOdds(recommendation.odds)}</em>
           </div>
         `;
         })
@@ -938,48 +1296,51 @@ function renderDailySpotlight() {
     return;
   }
 
-  const pick = event.prediction.pick;
   const quality = pickQuality(event);
+  const recommendation = recommendationForEvent(event, quality);
   const scoreText = event.score ? `${event.score.home} - ${event.score.away}` : "VS";
+  const reasons = recommendation.reasons.slice(0, 2);
+  const kickoff = event.status === "live" ? liveClockText(event) : formatTime(event.commenceTime);
   elements.dailySpotlight.innerHTML = `
     <article class="spotlight-card" data-event-id="${escapeHtml(event.id)}">
       <div class="spotlight-main">
         <div class="spotlight-meta">
-          <span class="source-badge">Pick destacado del dia</span>
+          <span class="source-badge">Pick principal</span>
           <span>${escapeHtml(event.league)}</span>
-          ${event.status === "live" ? eventTimeHtml(event) : `<span>${escapeHtml(formatTime(event.commenceTime))}</span>`}
+          ${event.status === "live" ? eventTimeHtml(event) : `<span>${escapeHtml(kickoff)}</span>`}
         </div>
         <div class="spotlight-match">
-          <div>
+          <div class="spotlight-team">
             <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
             <strong>${escapeHtml(event.homeTeam)}</strong>
           </div>
-          <span>${escapeHtml(scoreText)}</span>
-          <div>
-            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+          <div class="spotlight-score">
+            <strong>${escapeHtml(scoreText)}</strong>
+            <span>${escapeHtml(event.score ? "Marcador oficial" : "Pronostico previo")}</span>
+          </div>
+          <div class="spotlight-team align-right">
             <strong>${escapeHtml(event.awayTeam)}</strong>
+            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
           </div>
         </div>
+        <div class="spotlight-strip">
+          <span>Resultado final: <b>${escapeHtml(pickSubtitle(event))}</b></span>
+          <span>Cuota mínima: <b>${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</b></span>
+          <span>Unidades sugeridas: <b>${quality.units.toFixed(2)}u</b></span>
+        </div>
         <div class="spotlight-pick">
-          <span>${escapeHtml(quality.quality)}</span>
-          <strong>${escapeHtml(pickSubtitle(event))}</strong>
-          <p>${escapeHtml(quickAnalysisReasons(event)[0])}</p>
+          <span>Explicacion del pick</span>
+          <strong>${escapeHtml(quality.quality)}</strong>
+          <p>${escapeHtml(reasons.join(" "))}</p>
         </div>
       </div>
       <div class="spotlight-side">
-        <div class="spotlight-metric">
-          <span>Confianza</span>
+        <span>Confianza</span>
+        <div class="spotlight-ring" style="--confidence: ${quality.confidence}">
           <strong>${quality.confidence}%</strong>
         </div>
-        <div class="spotlight-metric">
-          <span>Cuota minima</span>
-          <strong>${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</strong>
-        </div>
-        <div class="spotlight-metric">
-          <span>Unidades</span>
-          <strong>${quality.units.toFixed(2)}u</strong>
-        </div>
-        <button class="spotlight-button" type="button" id="spotlightDetailButton">Ver analisis completo</button>
+        <small>${escapeHtml(quality.risk)}</small>
+        <button class="spotlight-button" type="button" id="spotlightDetailButton">Ver análisis completo</button>
       </div>
     </article>`;
 
@@ -1045,10 +1406,10 @@ function renderPerformancePanels() {
     elements.performancePanel.innerHTML = `
       <div class="panel-title">
         <span>Rendimiento general</span>
-        <strong>Ultimos 30 dias</strong>
+        <strong>Últimos 30 días</strong>
       </div>
       <div class="performance-grid">
-        <div><span>Precision</span><strong>${precision}%</strong><small>${metrics.total ? "Con marcadores finales" : "Confianza promedio"}</small></div>
+        <div><span>Precisión</span><strong>${precision}%</strong><small>${metrics.total ? "Con marcadores finales" : "Confianza promedio"}</small></div>
         <div><span>Total de picks</span><strong>${metrics.total || strict.length}</strong><small>${metrics.total ? "Cerrados" : "Recomendables"}</small></div>
         <div><span>Beneficio</span><strong>${formatUnits(metrics.units)}</strong><small>Unidades</small></div>
         <div><span>Racha actual</span><strong>${currentStreak}</strong><small>Picks ganadores</small></div>
@@ -1065,11 +1426,11 @@ function renderPerformancePanels() {
   if (elements.latestPicksPanel) {
     elements.latestPicksPanel.innerHTML = `
       <div class="panel-title">
-        <span>Ultimos picks</span>
+        <span>Últimos picks</span>
         <button class="text-button mini-link" type="button" id="latestPicksButton">Ver todos</button>
       </div>
       <div class="recent-picks-list">
-        ${recent.length ? recent.map(renderRecentPickItem).join("") : `<div class="empty-message">Aun no hay picks recomendables.</div>`}
+        ${recent.length ? recent.map(renderRecentPickItem).join("") : `<div class="empty-message">Aún no hay picks recomendables.</div>`}
       </div>`;
     bindEventCards(elements.latestPicksPanel);
     elements.latestPicksPanel.querySelector("#latestPicksButton")?.addEventListener("click", () => showView("featured"));
@@ -1117,16 +1478,17 @@ function withBookmakerLeg(event, leg, index) {
 
 function parlayLegPool(event) {
   const pick = event.prediction.pick;
+  const quality = pickQuality(event);
   const isMlb = event.sportKey === "baseball_mlb";
   const eventName = `${event.homeTeam} vs ${event.awayTeam}`;
-  const baseConfidence = clamp(pick.confidence || 60, 56, 88);
+  const baseConfidence = clamp(quality.confidence || pick.confidence || 60, 56, 88);
   const pickSide = pick.label;
   const favoritePlus = `${pickSide} +1.5`;
   const baseLeg = {
     eventId: event.id,
     sportKey: event.sportKey,
     sport: displaySportName(event),
-    dataScore: availableDataScore(event)
+    dataScore: quality.dataScore
   };
   const pool = [
     {
@@ -1239,13 +1601,21 @@ function eventMarketIsOpen(event) {
 }
 
 function legQualifies(event, leg, profile) {
+  if (!isRealAllowedEvent(event)) return false;
   const quality = pickQuality(event);
   if (!quality.recommendable || !eventMarketIsOpen(event)) return false;
   if (quality.dataScore < 0.58 || leg.dataScore < 0.58) return false;
   if ((leg.confidence || 0) < profile.minConfidence) return false;
-  if (!Number.isFinite(Number(leg.odds)) || Number(leg.odds) < 1.18) return false;
-  if (profile.maxOdds && Number(leg.odds) > profile.maxOdds) return false;
-  if (quality.minOdds && Number(leg.odds) < quality.minOdds * 0.92) return false;
+  const odds = decimalOdds(leg.odds);
+  if (!odds || odds < 1.18) return false;
+  if (profile.maxOdds && odds > profile.maxOdds) return false;
+  const margin = valueMarginForProfile(profile.risk);
+  const estimatedProbability = normalizeProbability((leg.confidence || 0) / 100);
+  const implied = impliedProbability(odds);
+  if (estimatedProbability === null || implied === null || estimatedProbability <= implied + margin) return false;
+  const minimumOdds = minimumOddsFromProbability(estimatedProbability, margin);
+  if (minimumOdds && odds < minimumOdds) return false;
+  if (quality.minOdds && odds < quality.minOdds * 0.92) return false;
   return true;
 }
 
@@ -1272,7 +1642,7 @@ function parlayLegForEvent(event, index) {
 
 function buildParlayTicket(sportKey, label) {
   const profile = parlayProfiles.balanceado;
-  const candidates = strictEvents()
+  const candidates = strictEvents(12)
     .filter((event) => event.sportKey === sportKey && event.prediction?.pick?.bestOdds && eventMarketIsOpen(event))
     .slice(0, 6);
   if (!candidates.length) return null;
@@ -1331,7 +1701,7 @@ function buildSingleEventParlay(event) {
 
 function buildConstructedParlay(profileKey = state.parlayType) {
   const profile = parlayProfiles[profileKey] || parlayProfiles.conservador;
-  const candidates = strictEvents()
+  const candidates = strictEvents(12)
     .filter((event) => eventMarketIsOpen(event))
     .flatMap((event) => chooseParlayLegs(event, 1, profile))
     .filter(Boolean)
@@ -1409,7 +1779,7 @@ function renderParlayTicket(ticket, extraClass = "") {
         <button class="text-button parlay-detail-button" type="button" data-event-id="${escapeHtml(ticket.legs[0]?.eventId || "")}">Ver detalle</button>
         <button class="text-button parlay-copy-button" type="button" data-copy="${escapeHtml(copyText)}">Copiar parlay</button>
       </div>
-      <p class="parlay-disclaimer">Parlay sugerido por probabilidad. No garantiza acierto ni ganancia.</p>
+      <p class="parlay-disclaimer">Parlay sugerido por probabilidad. No implica acierto ni ganancia.</p>
     </article>`;
 }
 
@@ -1428,7 +1798,7 @@ function renderCombinations() {
     ? tickets
         .map((ticket) => renderParlayTicket(ticket))
         .join("")
-    : `<div class="empty-message">Aun no hay suficientes partidos para generar el parlay del dia.</div>`;
+    : `<div class="empty-message">Aún no hay suficientes partidos para generar el parlay del día.</div>`;
   if (elements.parlayDailyCard) {
     elements.parlayDailyCard.hidden = true;
   }
@@ -1451,7 +1821,7 @@ function renderDailyParlayPage() {
     <section class="profile-hero daily-parlay-hero">
       <span class="ai-pill"><span class="live-dot"></span> Parlay del dia</span>
       <h1>Constructor de parlays</h1>
-      <p>Combinaciones estrictas para Futbol y MLB segun la casa elegida. Prefiere menos selecciones cuando el valor no es claro.</p>
+      <p>Combinaciones estrictas para Fútbol y MLB según la casa elegida. Prefiere menos selecciones cuando el valor no es claro.</p>
     </section>
     <article class="parlay-builder-panel">
       <label>
@@ -1474,7 +1844,7 @@ function renderDailyParlayPage() {
         <div class="predictions-icon"><span aria-hidden="true">P</span></div>
         <div>
           <h2>Parlay del dia</h2>
-          <p>Filtrado por confianza, cuota minima, mercado abierto y datos disponibles.</p>
+          <p>Filtrado por confianza, cuota mínima, mercado abierto y datos disponibles.</p>
         </div>
       </div>
       <div class="predictions-list">
@@ -1658,6 +2028,7 @@ function recommendedOddsText(pick) {
 
 function quickAnalysisReasons(event) {
   const pick = event.prediction.pick;
+  const quality = pickQuality(event);
   const rows = probabilityRows(event);
   const selected = rows.find((row) => row.key === pick.key);
   const nextBest = rows
@@ -1665,12 +2036,12 @@ function quickAnalysisReasons(event) {
     .sort((a, b) => b.percent - a.percent)[0];
   const spread = selected && nextBest ? Math.max(1, selected.percent - nextBest.percent) : 0;
   const reasons = [
-    `${pick.label} marca ${selected?.percent || pick.confidence}% de probabilidad estimada.`,
+    `${pick.label} marca ${selected?.percent || quality.confidence}% de probabilidad estimada.`,
     spread ? `Ventaja de ${spread} pts contra la siguiente opcion del mercado.` : `El modelo encuentra valor frente a la cuota disponible.`,
-    `${selectedBookmakerName()} muestra referencia de cuota ${pick.bestOdds ? formatOdds(pick.bestOdds) : "por confirmar"}.`
+    `${selectedBookmakerName()} muestra referencia de cuota ${pick.bestOdds ? formatOdds(pick.bestOdds) : "por confirmar"}; minimo recomendado ${quality.minOdds ? formatOdds(quality.minOdds) : "por confirmar"}.`
   ];
 
-  return [...reasons, ...(pick.reasons || [])].slice(0, 3);
+  return [...quality.reasons, ...reasons].slice(0, 3);
 }
 
 function detailStatsRows(event) {
@@ -1682,7 +2053,7 @@ function detailStatsRows(event) {
   const scoreLabel = event.sportKey?.includes("baseball") ? "Carreras" : "Goles";
 
   return [
-    ["Ultimos 5", "Pendiente de feed estadistico oficial"],
+    ["Últimos 5", "Pendiente de feed estadístico oficial"],
     [scoreLabel, totalScore === null ? "Se actualiza con marcador oficial" : `${totalScore} acumulados`],
     ["Lesiones", "Sin feed medico conectado"],
     ["Local/visita", `${event.homeTeam} local / ${event.awayTeam} visita`],
@@ -1736,7 +2107,7 @@ function renderProDetailPanel(event) {
         <section>
           <h3>Analisis rapido</h3>
           <ul>
-            ${[...quality.reasons, `Riesgo: ${quality.risks}`].slice(0, 4).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+            ${[...quality.reasons, `Riesgo: ${riskText(quality.risks)}`].slice(0, 4).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
           </ul>
         </section>
         <section>
@@ -1772,11 +2143,11 @@ function buildSettledParlayHits() {
       if (events.length < 3) return null;
       const sport = sportOptions.find((item) => item.value === sportKey);
       const legs = events.slice(0, 5).map((event, index) => ({
-        market: "Prediccion cerrada",
+        market: "Predicción cerrada",
         selection: `${event.prediction.pick.label} acerto`,
         eventName: `${event.homeTeam} vs ${event.awayTeam}`,
         odds: event.prediction.pick.bestOdds || derivedMarketOdds(event, index),
-        confidence: event.prediction.pick.confidence,
+        confidence: pickQuality(event).confidence,
         bestBook: event.prediction.pick.bestBook || "Mejor disponible"
       }))
       .map((leg, index) => withBookmakerLeg(events[index], leg, index));
@@ -1865,7 +2236,8 @@ function renderHitsPage() {
 
 function renderFeaturedPage() {
   if (!elements.featuredPageContent) return;
-  const events = strictEvents().slice(0, 12);
+  const events = strictEvents(8);
+  const avoided = nonRecommendedEvents(8);
   elements.featuredPageContent.innerHTML = `
     <div class="detail-actions">
       <button class="text-button detail-back" id="featuredBackButton" type="button">Volver a inicio</button>
@@ -1874,11 +2246,39 @@ function renderFeaturedPage() {
     <section class="profile-hero page-hero">
       <span class="ai-pill"><span class="live-dot"></span> Picks alta confianza</span>
       <h1>Predicciones con mayor confianza</h1>
-      <p>Selecciona cualquier partido para abrir su analisis y su parlay generado para ese evento. Son estimaciones de alta confianza, no resultados garantizados.</p>
+      <p>Selecciona cualquier partido para abrir su análisis y su parlay generado para ese evento. Son estimaciones con filtros estrictos de valor y datos.</p>
     </section>
     <div class="featured-grid page-grid" id="featuredPageGrid">
       ${featuredCardsHtml(events)}
-    </div>`;
+    </div>
+    <article class="predictions-card">
+      <div class="predictions-header">
+        <div class="predictions-icon"><span aria-hidden="true">!</span></div>
+        <div>
+          <h2>No recomendados</h2>
+          <p>Partidos donde PickPro prefiere no apostar por ahora.</p>
+        </div>
+      </div>
+      <div class="predictions-list">
+        ${
+          avoided.length
+            ? avoided
+                .map(
+                  ({ event, quality }) => `
+          <div class="odds-row">
+            <span class="check-dot"><span aria-hidden="true">x</span></span>
+            <div>
+              <strong>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</strong>
+              <span>${escapeHtml(quality.quality)} - ${escapeHtml(quality.decisionReason || riskText(quality.risks) || "No hay ventaja clara.")}</span>
+            </div>
+            <em>${quality.confidence}%</em>
+          </div>`
+                )
+                .join("")
+            : `<div class="empty-message">No hay partidos descartados con el filtro actual.</div>`
+        }
+      </div>
+    </article>`;
 
   bindFeaturedCards(elements.featuredPageContent.querySelector("#featuredPageGrid"));
   document.querySelector("#featuredBackButton")?.addEventListener("click", () => showView("home"));
@@ -1889,7 +2289,7 @@ function renderSourcesPage() {
   elements.sourcesPageContent.innerHTML = `
     <div class="detail-actions">
       <button class="text-button detail-back" id="sourcesBackButton" type="button">Volver a inicio</button>
-      <span class="source-badge">Casas Mexico</span>
+      <span class="source-badge">Casas México</span>
     </div>
     <section class="profile-hero page-hero">
       <span class="ai-pill"><span class="live-dot"></span> Fuentes de cuotas</span>
@@ -1903,7 +2303,7 @@ function renderSourcesPage() {
 }
 
 function sourceEvents() {
-  return (state.allEvents.length ? state.allEvents : state.events).filter(isAllowedSport);
+  return (state.allEvents.length ? state.allEvents : state.events).filter(isRealAllowedEvent);
 }
 
 function sortDiscoveryEvents(events) {
@@ -2058,7 +2458,7 @@ function renderMatchDetail() {
         <div class="score-box">
           <strong>${escapeHtml(scoreText)}</strong>
           <span>${escapeHtml(scoreSubline(event, pick))}</span>
-          <small>Prediccion IA: ${escapeHtml(pick.label)}</small>
+          <small>Predicción IA: ${escapeHtml(pick.label)}</small>
         </div>
         <div class="team">
           <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
@@ -2101,7 +2501,7 @@ function renderMatchDetail() {
 function renderAnalysis() {
   const event = state.events.find((item) => item.id === state.selectedId) || state.events[0];
   if (!event) {
-    elements.analysisCard.innerHTML = `<div class="empty-message">Selecciona un evento para ver el analisis IA.</div>`;
+    elements.analysisCard.innerHTML = `<div class="empty-message">Selecciona un evento para ver el análisis IA.</div>`;
     return;
   }
 
@@ -2126,7 +2526,7 @@ function renderAnalysis() {
       </div>
     </div>
     <ul class="reason-list">
-      ${[...quality.reasons, `Factor de riesgo: ${quality.risks}`].map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
+      ${[...quality.reasons, `Factor de riesgo: ${riskText(quality.risks)}`].map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}
     </ul>
   `;
 }

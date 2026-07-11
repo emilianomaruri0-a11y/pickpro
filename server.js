@@ -66,8 +66,8 @@ let scoreRefreshInFlight = false;
 
 let feedState = {
   events: [],
-  feedMode: ODDS_API_KEY ? "live" : "demo",
-  provider: ODDS_API_KEY ? "The Odds API" : "Demo local",
+  feedMode: ODDS_API_KEY ? "live" : "sin-api-real",
+  provider: ODDS_API_KEY ? "The Odds API" : "Sin API real",
   providerErrors: [],
   lastRefreshAt: null,
   nextRefreshAt: null,
@@ -1279,54 +1279,8 @@ function standardDeviation(values) {
   return Math.sqrt(variance);
 }
 
-function perturbOdds(odds, seed, index) {
-  const wave = Math.sin(Date.now() / 47000 + seed * 0.11 + index) * 0.018;
-  const slow = Math.cos(Date.now() / 83000 + seed * 0.07 + index) * 0.011;
-  return Math.max(1.1, round(odds * (1 + wave + slow), 2));
-}
-
 function buildDemoFeed() {
-  const refreshSeed = feedState.refreshCount + 1;
-  const configuredSports = new Set(SPORT_KEYS);
-  const demoEvents = DEMO_EVENTS.filter((event) => configuredSports.has(event.sportKey));
-  const sourceEvents = demoEvents.length ? demoEvents : DEMO_EVENTS;
-
-  return sourceEvents.map((event, eventIndex) => {
-    const seed = hashString(event.id) + refreshSeed;
-    const markets = JSON.parse(JSON.stringify(event.markets));
-
-    Object.values(markets).forEach((marketRows) => {
-      marketRows.forEach((row, rowIndex) => {
-        ["home", "draw", "away", "over", "under"].forEach((key, keyIndex) => {
-          if (typeof row[key] === "number") {
-            row[key] = perturbOdds(row[key], seed + rowIndex, keyIndex);
-          }
-        });
-        row.updatedMins = Math.max(1, Math.round((row.updatedMins || 2) + Math.sin(Date.now() / 60000 + eventIndex) * 2));
-      });
-    });
-
-    const statWave = Math.sin(Date.now() / 11000 + seed * 0.013) * 0.012;
-    const awayWave = Math.cos(Date.now() / 13000 + seed * 0.017) * 0.012;
-    const stats = {
-      ...event.stats,
-      homeForm: clamp(event.stats.homeForm + statWave, 0.25, 0.9),
-      awayForm: clamp(event.stats.awayForm + awayWave, 0.25, 0.9),
-      homeAttack: clamp(event.stats.homeAttack + statWave * 0.75, 0.25, 0.9),
-      awayAttack: clamp(event.stats.awayAttack + awayWave * 0.75, 0.25, 0.9),
-      volatility: clamp(event.stats.volatility + Math.abs(statWave - awayWave) * 0.5, 0.05, 0.45)
-    };
-    const liveWindow = event.commenceOffsetHours <= 1 && event.commenceOffsetHours > -2;
-    return {
-      ...event,
-      stats,
-      dataSource: "Demo local",
-      isDemo: true,
-      status: liveWindow ? "live" : "upcoming",
-      commenceTime: withTimeOffset(event.commenceOffsetHours),
-      markets
-    };
-  });
+  return [];
 }
 
 function averageMarketProbabilities(event) {
@@ -1927,8 +1881,8 @@ async function fetchLiveFeed() {
 async function refreshFeed(reason = "schedule") {
   const providerErrors = [];
   let events = [];
-  let provider = "Demo local";
-  let feedMode = "demo";
+  let provider = ODDS_API_KEY ? "The Odds API" : "Sin API real";
+  let feedMode = ODDS_API_KEY ? "sin-eventos-reales" : "sin-api-real";
   let quota = null;
 
   if (ODDS_API_KEY) {
@@ -1945,14 +1899,15 @@ async function refreshFeed(reason = "schedule") {
       providerErrors.push(...liveFeed.errors, "Sin cuotas nuevas; usando eventos recientes en cache para mantener estados en vivo.");
       quota = liveFeed.quota;
     } else {
-      events = buildDemoFeed();
-      provider = "Demo local";
-      feedMode = "demo-fallback";
-      providerErrors.push(...liveFeed.errors, "No llegaron eventos validos; se activo demo local.");
+      events = [];
+      provider = "The Odds API";
+      feedMode = "sin-eventos-reales";
+      providerErrors.push(...liveFeed.errors, "No llegaron eventos reales validos; no se muestran partidos demo.");
       quota = liveFeed.quota;
     }
   } else {
-    events = buildDemoFeed();
+    events = [];
+    providerErrors.push("Falta THE_ODDS_API_KEY; no se muestran partidos demo en produccion.");
   }
 
   feedState = {
@@ -2096,12 +2051,8 @@ function broadcastSnapshot() {
 function tickPredictions() {
   if (!feedState.events.length) return;
 
-  if (feedState.feedMode === "demo" || feedState.feedMode === "demo-fallback") {
-    feedState.events = enrichEvents(buildDemoFeed());
-  } else {
-    const cachedEvents = cachedProviderEvents();
-    feedState.events = enrichEvents(cachedEvents.length ? cachedEvents : normalizeRuntimeEvents(feedState.events));
-  }
+  const cachedEvents = cachedProviderEvents();
+  feedState.events = enrichEvents(cachedEvents.length ? cachedEvents : normalizeRuntimeEvents(feedState.events));
 
   feedState.lastRefreshAt = nowIso();
   feedState.nextRefreshAt = new Date(Date.now() + LIVE_TICK_INTERVAL_MS).toISOString();

@@ -21,7 +21,7 @@ notepad .env
 .\start.ps1
 ```
 
-Dentro de `.env`, cambia `THE_ODDS_API_KEY=put_your_key_here` por tu clave real. El ejemplo ya esta configurado para cuidar una cuota gratis: pocas ligas, una region y solo mercado principal. Cuando el proveedor responda eventos, la app cambia de `demo-fallback` a datos en vivo y mantiene la pantalla actualizada por streaming local.
+Dentro de `.env`, cambia `THE_ODDS_API_KEY=put_your_key_here` por tu clave real. El ejemplo ya esta configurado para cuidar una cuota gratis: pocas ligas, una region y solo mercado principal. Cuando el proveedor responda eventos, la app muestra datos en vivo y mantiene la pantalla actualizada por streaming local. Si el proveedor no devuelve partidos reales, PickPro no inventa eventos.
 
 Modo recomendado para empezar gratis con MLB + Copa Mundial FIFA:
 
