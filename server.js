@@ -34,16 +34,30 @@ const RECOVERY_OUTBOX_FILE = path.join(DATA_DIR, "recovery-outbox.json");
 const ODDS_API_KEY = process.env.THE_ODDS_API_KEY || "";
 const ODDS_REGIONS = process.env.ODDS_REGIONS || "us";
 const ODDS_MARKETS = process.env.ODDS_MARKETS || "h2h";
-const SPORT_KEYS = (
-  process.env.SPORT_KEYS ||
-  "baseball_mlb,soccer_fifa_world_cup"
-)
+const FOOTBALL_LEAGUE_KEYS = [
+  "soccer_mexico_ligamx",
+  "soccer_epl",
+  "soccer_uefa_champs_league",
+  "soccer_uefa_europa_league",
+  "soccer_spain_la_liga"
+];
+const configuredSportKeys = (process.env.SPORT_KEYS || "")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || (ODDS_API_KEY ? 10800000 : 1000));
+const SPORT_KEYS = configuredSportKeys.filter((key) => FOOTBALL_LEAGUE_KEYS.includes(key));
+if (!SPORT_KEYS.length) SPORT_KEYS.push(...FOOTBALL_LEAGUE_KEYS);
+const MIN_ODDS_POLL_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const MIN_SCORE_POLL_INTERVAL_MS = 30 * 60 * 1000;
+const POLL_INTERVAL_MS = ODDS_API_KEY
+  ? Math.max(Number(process.env.POLL_INTERVAL_MS || MIN_ODDS_POLL_INTERVAL_MS), MIN_ODDS_POLL_INTERVAL_MS)
+  : 1000;
 const LIVE_TICK_INTERVAL_MS = Number(process.env.LIVE_TICK_INTERVAL_MS || 1000);
-const SCORE_POLL_INTERVAL_MS = Number(process.env.SCORE_POLL_INTERVAL_MS || 300000);
+const SCORE_POLL_INTERVAL_MS = Math.max(
+  Number(process.env.SCORE_POLL_INTERVAL_MS || MIN_SCORE_POLL_INTERVAL_MS),
+  MIN_SCORE_POLL_INTERVAL_MS
+);
+const PROVIDER_CREDIT_RESERVE = Math.max(Number(process.env.PROVIDER_CREDIT_RESERVE || 60), 25);
 const EVENT_CACHE_TTL_MS = Number(process.env.EVENT_CACHE_TTL_HOURS || 36) * 60 * 60 * 1000;
 const SESSION_TTL_HOURS = Math.max(Number(process.env.SESSION_TTL_HOURS || 720), 720);
 const SESSION_TTL_MS = SESSION_TTL_HOURS * 60 * 60 * 1000;
@@ -1702,12 +1716,18 @@ function scoreFromProvider(item) {
 async function fetchScoresForSport(sportKey) {
   const scores = new Map();
   if (process.env.ENABLE_SCORES === "false") return scores;
+  const remaining = Number(feedState.quota?.remaining);
+  if (Number.isFinite(remaining) && remaining <= PROVIDER_CREDIT_RESERVE) return scores;
   const url = new URL(`https://api.the-odds-api.com/v4/sports/${sportKey}/scores`);
   url.searchParams.set("apiKey", ODDS_API_KEY);
-  url.searchParams.set("daysFrom", "1");
   url.searchParams.set("dateFormat", "iso");
 
   const response = await fetch(url, { headers: { accept: "application/json" } });
+  const quota = {
+    remaining: response.headers.get("x-requests-remaining"),
+    used: response.headers.get("x-requests-used")
+  };
+  if (quota.remaining !== null) feedState.quota = quota;
   if (!response.ok) return scores;
   const data = await response.json();
   (Array.isArray(data) ? data : []).forEach((item) => {
@@ -1825,24 +1845,45 @@ function sportKeyToLeague(sportKey) {
     soccer_mexico_ligamx: "Liga MX",
     soccer_epl: "Premier League",
     soccer_spain_la_liga: "La Liga",
-    soccer_uefa_champs_league: "Champions League"
+    soccer_uefa_champs_league: "Champions League",
+    soccer_uefa_europa_league: "Europa League"
   };
   if (leagueNames[sportKey]) return leagueNames[sportKey];
   const parts = sportKey.split("_");
   return parts.slice(1).join(" ").toUpperCase() || sportKey;
 }
 
+async function fetchActiveSportKeys() {
+  const url = new URL("https://api.the-odds-api.com/v4/sports");
+  url.searchParams.set("apiKey", ODDS_API_KEY);
+  const response = await fetch(url, { headers: { accept: "application/json" } });
+  if (!response.ok) return new Set(SPORT_KEYS);
+  const data = await response.json();
+  return new Set(
+    (Array.isArray(data) ? data : [])
+      .filter((sport) => sport?.active !== false)
+      .map((sport) => sport.key)
+  );
+}
+
 async function fetchLiveFeed() {
   const events = [];
   const errors = [];
   let quota = null;
+  let activeSportKeys = new Set(SPORT_KEYS);
+
+  try {
+    activeSportKeys = await fetchActiveSportKeys();
+  } catch (error) {
+    errors.push(`catalogo de ligas: ${error.message}`);
+  }
 
   for (const sportKey of SPORT_KEYS) {
-    let scoreMap = new Map();
-    try {
-      scoreMap = await fetchScoresForSport(sportKey);
-    } catch (error) {
-      errors.push(`${sportKey} scores: ${error.message}`);
+    if (!activeSportKeys.has(sportKey)) continue;
+    const remaining = Number(quota?.remaining);
+    if (Number.isFinite(remaining) && remaining <= PROVIDER_CREDIT_RESERVE) {
+      errors.push(`Reserva de cuota activa: quedan ${remaining} creditos; se detuvieron nuevas consultas.`);
+      break;
     }
 
     const url = new URL(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`);
@@ -1867,7 +1908,7 @@ async function fetchLiveFeed() {
 
       const data = await response.json();
       data.forEach((item) => {
-        const transformed = transformOddsApiEvent(item, sportKey, scoreMap.get(scoreKey(item.home_team, item.away_team)));
+        const transformed = transformOddsApiEvent(item, sportKey);
         if (transformed.markets.h2h.length) events.push(transformed);
       });
     } catch (error) {
@@ -1928,9 +1969,8 @@ async function refreshFeed(reason = "schedule") {
 function isInsideScoreWindow(event, now = Date.now()) {
   const startMs = new Date(event.commenceTime).getTime();
   if (!Number.isFinite(startMs)) return false;
-  const pregameWindow = 20 * 60 * 1000;
-  const postgameWindow = 45 * 60 * 1000;
-  return now >= startMs - pregameWindow && now <= startMs + liveWindowMsForSport(event.sportKey) + postgameWindow;
+  const postgameWindow = 30 * 60 * 1000;
+  return now >= startMs && now <= startMs + liveWindowMsForSport(event.sportKey) + postgameWindow;
 }
 
 function activeScoreSports() {
@@ -2196,6 +2236,7 @@ async function handleRequest(request, response) {
       refreshCount: feedState.refreshCount,
       pollIntervalMs: POLL_INTERVAL_MS,
       scorePollIntervalMs: SCORE_POLL_INTERVAL_MS,
+      providerCreditReserve: PROVIDER_CREDIT_RESERVE,
       quota: feedState.quota,
       hasLiveKey: Boolean(ODDS_API_KEY)
     });

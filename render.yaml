@@ -15,13 +15,15 @@ services:
       - key: ODDS_MARKETS
         value: h2h
       - key: SPORT_KEYS
-        value: baseball_mlb,soccer_fifa_world_cup
+        value: soccer_mexico_ligamx,soccer_epl,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_spain_la_liga
       - key: POLL_INTERVAL_MS
-        value: 10800000
+        value: 43200000
       - key: LIVE_TICK_INTERVAL_MS
         value: 1000
       - key: SCORE_POLL_INTERVAL_MS
-        value: 300000
+        value: 1800000
+      - key: PROVIDER_CREDIT_RESERVE
+        value: 60
       - key: EVENT_CACHE_TTL_HOURS
         value: 36
       - key: SESSION_TTL_HOURS

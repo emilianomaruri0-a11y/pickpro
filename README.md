@@ -23,30 +23,32 @@ notepad .env
 
 Dentro de `.env`, cambia `THE_ODDS_API_KEY=put_your_key_here` por tu clave real. El ejemplo ya esta configurado para cuidar una cuota gratis: pocas ligas, una region y solo mercado principal. Cuando el proveedor responda eventos, la app muestra datos en vivo y mantiene la pantalla actualizada por streaming local. Si el proveedor no devuelve partidos reales, PickPro no inventa eventos.
 
-Modo recomendado para empezar gratis con MLB + Copa Mundial FIFA:
+Modo recomendado para una cuota gratis de 500 creditos, enfocado solo en futbol:
 
 ```env
 ODDS_REGIONS=us
 ODDS_MARKETS=h2h
-SPORT_KEYS=baseball_mlb,soccer_fifa_world_cup
-POLL_INTERVAL_MS=10800000
-SCORE_POLL_INTERVAL_MS=300000
+SPORT_KEYS=soccer_mexico_ligamx,soccer_epl,soccer_uefa_champs_league,soccer_uefa_europa_league,soccer_spain_la_liga
+POLL_INTERVAL_MS=43200000
+SCORE_POLL_INTERVAL_MS=1800000
+PROVIDER_CREDIT_RESERVE=60
 ```
 
-Con esta configuracion se consulta MLB y Copa Mundial, mercado ganador del juego y una region. En The Odds API normalmente eso equivale a 1 credito por liga consultada cuando hay datos disponibles; con 500 creditos gratis y refresco cada 3 horas queda cerca de 480 creditos al mes si ambas ligas devuelven eventos todo el mes.
+La app consulta Liga MX, Premier League, Champions League, Europa League y La Liga. Usa una region y solo el mercado principal. Las cuotas se consultan como maximo cada 12 horas; los marcadores se consultan cada 30 minutos unicamente cuando hay un partido dentro de su ventana en vivo. Al llegar a la reserva configurada, PickPro deja de gastar creditos y conserva los ultimos eventos reales en cache.
 
-Si quieres solo la Copa Mundial, usa:
+Si quieres reducir aun mas el consumo, usa solo tres ligas:
 
 ```env
-SPORT_KEYS=soccer_fifa_world_cup
+SPORT_KEYS=soccer_mexico_ligamx,soccer_epl,soccer_uefa_champs_league
 ```
 
 Variables utiles:
 
 - `PORT`: puerto local, por defecto `4173`.
-- `POLL_INTERVAL_MS`: intervalo de consulta al proveedor, por defecto `10800000` con API para cuidar cuota gratis.
+- `POLL_INTERVAL_MS`: intervalo de consulta al proveedor; PickPro impone un minimo de `43200000` (12 horas) con la cuota gratis.
 - `LIVE_TICK_INTERVAL_MS`: intervalo del stream visual en la app, por defecto `1000`.
-- `SCORE_POLL_INTERVAL_MS`: refresco de marcadores oficiales para eventos en vivo o cercanos, por defecto `300000`.
+- `SCORE_POLL_INTERVAL_MS`: refresco de marcadores oficiales solo durante partidos activos; minimo `1800000` (30 minutos).
+- `PROVIDER_CREDIT_RESERVE`: creditos que PickPro intenta conservar sin gastar, por defecto `60`.
 - `EVENT_CACHE_TTL_HOURS`: horas que conserva eventos recientes para marcarlos en vivo por horario aunque el proveedor ya no devuelva cuotas.
 - `SPORT_KEYS`: lista separada por comas de deportes/ligas soportadas por el proveedor.
 - `ODDS_REGIONS`: regiones de casas para The Odds API.

@@ -150,7 +150,14 @@ function setupViews() {
 
 setupViews();
 
-const allowedSportKeys = new Set(["soccer_fifa_world_cup", "baseball_mlb"]);
+const footballLeagueKeys = [
+  "soccer_mexico_ligamx",
+  "soccer_epl",
+  "soccer_uefa_champs_league",
+  "soccer_uefa_europa_league",
+  "soccer_spain_la_liga"
+];
+const allowedSportKeys = new Set(footballLeagueKeys);
 
 function isEstimatedEvent(event) {
   const sourceText = [
@@ -183,8 +190,11 @@ function isRealAllowedEvent(event) {
 
 const sportOptions = [
   { label: "Todos", value: "all", query: "Todos", logo: "" },
-  { label: "Fútbol", value: "soccer_fifa_world_cup", query: "Fútbol", logo: "/assets/league-worldcup-official.svg" },
-  { label: "MLB", value: "baseball_mlb", query: "MLB", logo: "/assets/league-mlb-official.svg" }
+  { label: "Liga MX", value: "soccer_mexico_ligamx", query: "Liga MX", logo: "" },
+  { label: "Premier League", value: "soccer_epl", query: "Premier League", logo: "" },
+  { label: "Champions League", value: "soccer_uefa_champs_league", query: "Champions League", logo: "" },
+  { label: "Europa League", value: "soccer_uefa_europa_league", query: "Europa League", logo: "" },
+  { label: "La Liga", value: "soccer_spain_la_liga", query: "La Liga", logo: "" }
 ];
 
 const mexicanBooks = [
@@ -608,7 +618,7 @@ function dataCompletenessReport(event, pick, oddsData = {}) {
     }
   }
 
-  if (sportKey === "soccer_fifa_world_cup") {
+  if (sportKey?.includes("soccer")) {
     const trendData = Number.isFinite(Number(stats.homeOverRate)) || Number.isFinite(Number(stats.awayOverRate));
     if (trendData) score += 0.03;
     else risks.push("Tendencia over/under limitada.");
@@ -1035,8 +1045,7 @@ function renderStatus() {
 }
 
 function renderSportTabs() {
-  const availableKeys = new Set(state.allEvents.map((event) => event.sportKey));
-  const fixed = sportOptions.filter((item) => item.value === "all" || availableKeys.has(item.value) || state.allEvents.length === 0);
+  const fixed = sportOptions;
   elements.sportTabs.innerHTML = fixed
     .map(
       (item) => `
@@ -1789,10 +1798,9 @@ function selectedEvent() {
 
 function renderCombinations() {
   if (!elements.comboList) return;
-  const tickets = [
-    buildParlayTicket("soccer_fifa_world_cup", "Copa Mundial"),
-    buildParlayTicket("baseball_mlb", "MLB")
-  ].filter(Boolean);
+  const tickets = footballLeagueKeys
+    .map((sportKey) => buildParlayTicket(sportKey, displaySportName(sportKey)))
+    .filter(Boolean);
 
   elements.comboList.innerHTML = tickets.length
     ? tickets
@@ -1821,7 +1829,7 @@ function renderDailyParlayPage() {
     <section class="profile-hero daily-parlay-hero">
       <span class="ai-pill"><span class="live-dot"></span> Parlay del dia</span>
       <h1>Constructor de parlays</h1>
-      <p>Combinaciones estrictas para Fútbol y MLB según la casa elegida. Prefiere menos selecciones cuando el valor no es claro.</p>
+      <p>Combinaciones estrictas de fútbol según la casa elegida. Prefiere menos selecciones cuando el valor no es claro.</p>
     </section>
     <article class="parlay-builder-panel">
       <label>
