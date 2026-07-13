@@ -68,12 +68,18 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_KV_TABLE =
   String(process.env.SUPABASE_KV_TABLE || "pickpro_kv").replace(/[^a-zA-Z0-9_]/g, "") || "pickpro_kv";
 const HAS_SUPABASE_STORE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const TEAM_BADGE_SEARCH_URL = "https://www.thesportsdb.com/api/v1/json/123/searchteams.php";
+const TEAM_BADGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const TEAM_BADGE_MISS_TTL_MS = 6 * 60 * 60 * 1000;
+const TEAM_BADGE_MAX_BYTES = 1_500_000;
 
 const clients = new Set();
 const eventCache = new Map();
 const sessions = new Map();
 const authAttempts = new Map();
 const recoveryCodes = new Map();
+const teamBadgeCache = new Map();
+const teamBadgeRequests = new Map();
 
 let users = [];
 let scoreRefreshInFlight = false;
@@ -97,6 +103,9 @@ const MIME_TYPES = {
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".ico": "image/x-icon"
 };
 
@@ -2099,6 +2108,161 @@ function tickPredictions() {
   broadcastSnapshot();
 }
 
+function normalizeTeamBadgeName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b(fc|cf|afc|cd|club|deportivo)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function teamBadgeSlug(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function teamBadgeSport(sportKey) {
+  return String(sportKey || "").includes("baseball") ? "Baseball" : "Soccer";
+}
+
+function localTeamBadgePath(teamName) {
+  const slug = teamBadgeSlug(teamName);
+  if (!slug) return null;
+  const filePath = path.join(PUBLIC_DIR, "assets", "team-logos", `${slug}.png`);
+  return fs.existsSync(filePath) ? filePath : null;
+}
+
+function teamNameScore(query, team) {
+  const normalizedQuery = normalizeTeamBadgeName(query);
+  const names = [team?.strTeam, team?.strTeamShort, team?.strAlternate]
+    .flatMap((value) => String(value || "").split(","))
+    .map(normalizeTeamBadgeName)
+    .filter(Boolean);
+
+  return names.reduce((best, candidate) => {
+    if (candidate === normalizedQuery) return Math.max(best, 100);
+    if (candidate.includes(normalizedQuery) || normalizedQuery.includes(candidate)) {
+      return Math.max(best, 82);
+    }
+    const queryTokens = new Set(normalizedQuery.split(" ").filter(Boolean));
+    const candidateTokens = new Set(candidate.split(" ").filter(Boolean));
+    const shared = [...queryTokens].filter((token) => candidateTokens.has(token)).length;
+    const total = new Set([...queryTokens, ...candidateTokens]).size || 1;
+    return Math.max(best, Math.round((shared / total) * 70));
+  }, 0);
+}
+
+function trustedTeamBadgeUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      (url.hostname === "thesportsdb.com" || url.hostname.endsWith(".thesportsdb.com"));
+  } catch {
+    return false;
+  }
+}
+
+function resizedTeamBadgeUrl(value) {
+  return /\/(tiny|small|medium)$/.test(value) ? value : `${value.replace(/\/+$/g, "")}/small`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function downloadTeamBadge(teamName, sportKey) {
+  const searchUrl = new URL(TEAM_BADGE_SEARCH_URL);
+  searchUrl.searchParams.set("t", teamName);
+  const searchResponse = await fetchWithTimeout(searchUrl, {
+    headers: { accept: "application/json" }
+  });
+  if (!searchResponse.ok) return null;
+
+  const payload = await searchResponse.json();
+  const expectedSport = teamBadgeSport(sportKey);
+  const teams = Array.isArray(payload?.teams) ? payload.teams : [];
+  const candidates = teams.filter((team) => String(team?.strSport || "").toLowerCase() === expectedSport.toLowerCase());
+  const selected = (candidates.length ? candidates : teams)
+    .filter((team) => team?.strBadge || team?.strTeamBadge)
+    .sort((left, right) => teamNameScore(teamName, right) - teamNameScore(teamName, left))[0];
+  const badgeUrl = selected?.strBadge || selected?.strTeamBadge;
+  if (!badgeUrl || !trustedTeamBadgeUrl(badgeUrl)) return null;
+
+  const imageResponse = await fetchWithTimeout(resizedTeamBadgeUrl(badgeUrl), {
+    headers: { accept: "image/png,image/webp,image/jpeg" }
+  });
+  const contentType = String(imageResponse.headers.get("content-type") || "").split(";")[0].toLowerCase();
+  const contentLength = Number(imageResponse.headers.get("content-length") || 0);
+  if (!imageResponse.ok || !["image/png", "image/webp", "image/jpeg"].includes(contentType)) return null;
+  if (contentLength > TEAM_BADGE_MAX_BYTES) return null;
+
+  const buffer = Buffer.from(await imageResponse.arrayBuffer());
+  if (!buffer.length || buffer.length > TEAM_BADGE_MAX_BYTES) return null;
+  return { buffer, contentType };
+}
+
+async function resolveTeamBadge(teamName, sportKey) {
+  const cacheKey = `${teamBadgeSport(sportKey)}:${normalizeTeamBadgeName(teamName)}`;
+  const cached = teamBadgeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.badge;
+  if (teamBadgeRequests.has(cacheKey)) return teamBadgeRequests.get(cacheKey);
+
+  const request = downloadTeamBadge(teamName, sportKey)
+    .catch(() => null)
+    .then((badge) => {
+      teamBadgeCache.set(cacheKey, {
+        badge,
+        expiresAt: Date.now() + (badge ? TEAM_BADGE_CACHE_TTL_MS : TEAM_BADGE_MISS_TTL_MS)
+      });
+      return badge;
+    })
+    .finally(() => teamBadgeRequests.delete(cacheKey));
+  teamBadgeRequests.set(cacheKey, request);
+  return request;
+}
+
+function sendTeamBadge(response, buffer, contentType, cacheSeconds) {
+  response.writeHead(200, securityHeaders({
+    "content-type": contentType,
+    "cache-control": `public, max-age=${cacheSeconds}, stale-while-revalidate=86400`
+  }));
+  response.end(buffer);
+}
+
+async function serveTeamBadge(requestUrl, response) {
+  const teamName = String(requestUrl.searchParams.get("name") || "").replace(/[\u0000-\u001f]/g, "").trim();
+  const sportKey = String(requestUrl.searchParams.get("sport") || "soccer").slice(0, 80);
+  const fallbackPath = path.join(PUBLIC_DIR, "assets", "team-logos", "team-default.png");
+  const localPath = teamName.length <= 100 ? localTeamBadgePath(teamName) : null;
+
+  if (localPath) {
+    sendTeamBadge(response, await fsp.readFile(localPath), "image/png", 30 * 24 * 60 * 60);
+    return;
+  }
+
+  const badge = teamName && teamName.length <= 100
+    ? await resolveTeamBadge(teamName, sportKey)
+    : null;
+  if (badge) {
+    sendTeamBadge(response, badge.buffer, badge.contentType, 7 * 24 * 60 * 60);
+    return;
+  }
+
+  sendTeamBadge(response, await fsp.readFile(fallbackPath), "image/png", 6 * 60 * 60);
+}
+
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, securityHeaders({
     "content-type": "application/json; charset=utf-8",
@@ -2141,6 +2305,11 @@ async function serveStatic(requestUrl, response) {
 
 async function handleRequest(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+
+  if (request.method === "GET" && requestUrl.pathname === "/api/team-logo") {
+    await serveTeamBadge(requestUrl, response);
+    return;
+  }
 
   if (request.method === "GET" && requestUrl.pathname === "/login") {
     if (getSession(request)) {

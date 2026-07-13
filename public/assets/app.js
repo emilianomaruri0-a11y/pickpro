@@ -350,17 +350,12 @@ function compactStatusStats(event) {
   return ["Actualizando", "Tiempo real"];
 }
 
-function slugify(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-}
-
-function teamLogoSrc(name) {
-  return `/assets/team-logos/${slugify(name) || "team-default"}.png`;
+function teamLogoSrc(name, sportKey = "soccer") {
+  const params = new URLSearchParams({
+    name: String(name || ""),
+    sport: String(sportKey || "soccer")
+  });
+  return `/api/team-logo?${params.toString()}`;
 }
 
 function deterministicRatio(seed) {
@@ -1091,12 +1086,12 @@ function renderMatchCard(event) {
       </div>
       <div class="compact-score">
         <div class="compact-team-row">
-          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam, event.sportKey))}" alt="" />
           <span>${escapeHtml(event.homeTeam)}</span>
           <strong>${escapeHtml(shortScoreValue(event, "home"))}</strong>
         </div>
         <div class="compact-team-row">
-          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam, event.sportKey))}" alt="" />
           <span>${escapeHtml(event.awayTeam)}</span>
           <strong>${escapeHtml(shortScoreValue(event, "away"))}</strong>
         </div>
@@ -1221,9 +1216,9 @@ function featuredCardsHtml(events) {
               <span class="confidence-pill ${recommendation.confidence < 73 ? "medium" : ""}">${escapeHtml(recommendation.quality)}</span>
             </div>
             <div class="featured-teams">
-              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam, event.sportKey))}" alt="" />
               <span>vs</span>
-              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam, event.sportKey))}" alt="" />
             </div>
             <h3 class="featured-title">${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</h3>
             <p class="featured-subtitle">${escapeHtml(recommendation.title)}</p>
@@ -1309,7 +1304,7 @@ function renderDailySpotlight() {
       <div class="spotlight-game-row">
         <div class="spotlight-match">
           <div class="spotlight-team">
-            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam, event.sportKey))}" alt="" />
             <strong>${escapeHtml(event.homeTeam)}</strong>
           </div>
           <div class="spotlight-score">
@@ -1318,7 +1313,7 @@ function renderDailySpotlight() {
           </div>
           <div class="spotlight-team align-right">
             <strong>${escapeHtml(event.awayTeam)}</strong>
-            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+            <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam, event.sportKey))}" alt="" />
           </div>
         </div>
         <div class="spotlight-side">
@@ -2213,9 +2208,9 @@ function renderHitsPage() {
               <span class="confidence-pill">Acertado</span>
             </div>
             <div class="featured-teams">
-              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam, event.sportKey))}" alt="" />
               <span>${escapeHtml(`${event.score.home} - ${event.score.away}`)}</span>
-              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+              <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam, event.sportKey))}" alt="" />
             </div>
             <h3 class="featured-title">${escapeHtml(resultLabel(event))}</h3>
             <p class="featured-subtitle">${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</p>
@@ -2466,7 +2461,7 @@ function renderMatchDetail() {
       </div>
       <div class="detail-match-grid">
         <div class="team">
-          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
+          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam, event.sportKey))}" alt="" />
           <strong>${escapeHtml(event.homeTeam)}</strong>
         </div>
         <div class="score-box">
@@ -2475,7 +2470,7 @@ function renderMatchDetail() {
           <small>Predicción IA: ${escapeHtml(pick.label)}</small>
         </div>
         <div class="team">
-          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
+          <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam, event.sportKey))}" alt="" />
           <strong>${escapeHtml(event.awayTeam)}</strong>
         </div>
       </div>
