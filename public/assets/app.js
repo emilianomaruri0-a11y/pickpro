@@ -1074,15 +1074,22 @@ function renderSportTabs() {
 
 function renderMatchCard(event) {
   const pick = event.prediction.pick;
-  const quality = pickQuality(event);
   const meters = probabilityRows(event);
   const compactStats = compactStatusStats(event);
   const footerText = liveFooterText(event);
+  const contextText = footerText || compactStats.filter(Boolean).join(" | ");
 
   return `
     <article class="match-card ${state.selectedId === event.id ? "selected" : ""}" data-event-id="${escapeHtml(event.id)}">
-      <div class="compact-score">
+      <div class="match-sport-mark" aria-hidden="true">&#9917;</div>
+      <div class="match-context">
         <span class="compact-league">${escapeHtml(event.league)}</span>
+        <div class="compact-status-row">
+          ${eventTimeHtml(event)}
+          ${contextText ? `<span>${escapeHtml(contextText)}</span>` : ""}
+        </div>
+      </div>
+      <div class="compact-score">
         <div class="compact-team-row">
           <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
           <span>${escapeHtml(event.homeTeam)}</span>
@@ -1093,44 +1100,26 @@ function renderMatchCard(event) {
           <span>${escapeHtml(event.awayTeam)}</span>
           <strong>${escapeHtml(shortScoreValue(event, "away"))}</strong>
         </div>
-        <div class="compact-status-row">
-          ${eventTimeHtml(event)}
-          ${footerText ? `<span>${escapeHtml(footerText)}</span>` : ""}
-          <span class="compact-stat" aria-hidden="true">|</span>
-          <span class="compact-stat">${escapeHtml(compactStats[0])}</span>
-          <span class="compact-stat" aria-hidden="true">|</span>
-          <span class="compact-stat">${escapeHtml(compactStats[1])}</span>
-        </div>
       </div>
       <div class="compact-probability" aria-label="Probabilidades en tiempo real">
         <div class="compact-market-title">
           <span>Probabilidades IA</span>
           <strong>${escapeHtml(event.status === "live" ? liveClockText(event) : eventStatusLabel(event))}</strong>
         </div>
-        <div class="quality-row">
-          <span class="quality-pill ${quality.recommendable ? "recommended" : "avoid"}">${escapeHtml(quality.quality)}</span>
-          <span>${quality.confidence}% conf.</span>
-        </div>
         ${meters
           .map(
             (meter) => `
           <div class="meter-row compact-meter-row ${meter.key === pick.key ? "active" : ""}">
-            <div class="meter-head">
-              <span>${escapeHtml(meter.label)}</span>
-              <strong>${meter.percent}%</strong>
-            </div>
+            <span class="compact-meter-label">${escapeHtml(meter.label)}</span>
             <div class="meter-track">
               <span class="meter-fill ${escapeHtml(meter.key)}" style="width: ${meter.percent}%"></span>
             </div>
+            <strong>${meter.percent}%</strong>
           </div>`
           )
           .join("")}
-        <div class="match-card-meta">
-          <span>Cuota min. ${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</span>
-          <span>Riesgo ${escapeHtml(quality.risk)}</span>
-        </div>
-        <button class="compact-more" type="button">Ver mas &gt;</button>
       </div>
+      <button class="compact-more" type="button">Ver mas &gt;</button>
     </article>
   `;
 }
@@ -1307,17 +1296,17 @@ function renderDailySpotlight() {
 
   const quality = pickQuality(event);
   const recommendation = recommendationForEvent(event, quality);
-  const scoreText = event.score ? `${event.score.home} - ${event.score.away}` : "VS";
+  const scoreText = event.score ? `${event.score.home} : ${event.score.away}` : "VS";
   const reasons = recommendation.reasons.slice(0, 2);
   const kickoff = event.status === "live" ? liveClockText(event) : formatTime(event.commenceTime);
   elements.dailySpotlight.innerHTML = `
     <article class="spotlight-card" data-event-id="${escapeHtml(event.id)}">
-      <div class="spotlight-main">
-        <div class="spotlight-meta">
-          <span class="source-badge">Pick principal</span>
-          <span>${escapeHtml(event.league)}</span>
-          ${event.status === "live" ? eventTimeHtml(event) : `<span>${escapeHtml(kickoff)}</span>`}
-        </div>
+      <div class="spotlight-meta">
+        <span class="source-badge">Pick principal</span>
+        <span>${escapeHtml(event.league)}</span>
+        ${event.status === "live" ? eventTimeHtml(event) : `<span>${escapeHtml(kickoff)}</span>`}
+      </div>
+      <div class="spotlight-game-row">
         <div class="spotlight-match">
           <div class="spotlight-team">
             <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.homeTeam))}" alt="" />
@@ -1332,23 +1321,24 @@ function renderDailySpotlight() {
             <img class="team-logo" src="${escapeHtml(teamLogoSrc(event.awayTeam))}" alt="" />
           </div>
         </div>
-        <div class="spotlight-strip">
-          <span>Resultado final: <b>${escapeHtml(pickSubtitle(event))}</b></span>
-          <span>Cuota mínima: <b>${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</b></span>
-          <span>Unidades sugeridas: <b>${quality.units.toFixed(2)}u</b></span>
-        </div>
-        <div class="spotlight-pick">
-          <span>Explicacion del pick</span>
-          <strong>${escapeHtml(quality.quality)}</strong>
-          <p>${escapeHtml(reasons.join(" "))}</p>
+        <div class="spotlight-side">
+          <span>Confianza</span>
+          <div class="spotlight-ring" style="--confidence: ${quality.confidence}">
+            <strong>${quality.confidence}%</strong>
+          </div>
+          <small>${escapeHtml(quality.risk)}</small>
         </div>
       </div>
-      <div class="spotlight-side">
-        <span>Confianza</span>
-        <div class="spotlight-ring" style="--confidence: ${quality.confidence}">
-          <strong>${quality.confidence}%</strong>
+      <div class="spotlight-strip">
+        <span>Resultado final: <b>${escapeHtml(pickSubtitle(event))}</b></span>
+        <span>Cuota mínima: <b>${quality.minOdds ? formatOdds(quality.minOdds) : "--"}</b></span>
+        <span>Unidades sugeridas: <b>${quality.units.toFixed(2)}u</b></span>
+      </div>
+      <div class="spotlight-explanation-row">
+        <div class="spotlight-pick">
+          <span>Explicacion del pick</span>
+          <p>${escapeHtml(reasons.join(" "))}</p>
         </div>
-        <small>${escapeHtml(quality.risk)}</small>
         <button class="spotlight-button" type="button" id="spotlightDetailButton">Ver análisis completo</button>
       </div>
     </article>`;
@@ -1390,9 +1380,12 @@ function renderRecentPickItem(event) {
         : `<span>${escapeHtml(eventStatusLabel(event))}</span>`;
   return `
     <div class="recent-pick-row" data-event-id="${escapeHtml(event.id)}">
-      <span>${escapeHtml(displaySportName(event))}</span>
-      <strong>${escapeHtml(pick.label)}</strong>
-      <small>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</small>
+      <span class="recent-sport-icon" aria-hidden="true">&#9917;</span>
+      <div class="recent-pick-copy">
+        <small>${escapeHtml(event.homeTeam)} vs ${escapeHtml(event.awayTeam)}</small>
+        <strong>${escapeHtml(pick.label)}</strong>
+        <span>${escapeHtml(event.league)}</span>
+      </div>
       <em>${formatOdds(pick.bestOdds)}</em>
       <b>${quality.confidence}%</b>
       ${result}
@@ -1410,25 +1403,38 @@ function renderPerformancePanels() {
     .reduce((streak, event) => (streak.done ? streak : pickWon(event) ? { count: streak.count + 1, done: false } : { count: streak.count, done: true }), { count: 0, done: false }).count;
   const points = performanceSeries(settledPickEvents(isAllowedSport));
   const recent = sortDiscoveryEvents([...strict, ...allowedEvents.filter((event) => actualOutcomeKey(event))]).slice(0, 5);
+  const leagueSummary = sportOptions
+    .filter((sport) => sport.value !== "all")
+    .map((sport) => ({
+      label: sport.label,
+      count: allowedEvents.filter((event) => event.sportKey === sport.value).length,
+    }))
+    .filter((item) => item.count > 0)
+    .slice(0, 5);
 
   if (elements.performancePanel) {
     elements.performancePanel.innerHTML = `
       <div class="panel-title">
         <span>Rendimiento general</span>
-        <strong>Últimos 30 días</strong>
       </div>
       <div class="performance-grid">
-        <div><span>Precisión</span><strong>${precision}%</strong><small>${metrics.total ? "Con marcadores finales" : "Confianza promedio"}</small></div>
+        <div><span>Precisión</span><strong>${precision}%</strong><small>${metrics.total ? "Acierto general" : "Confianza promedio"}</small></div>
         <div><span>Total de picks</span><strong>${metrics.total || strict.length}</strong><small>${metrics.total ? "Cerrados" : "Recomendables"}</small></div>
         <div><span>Beneficio</span><strong>${formatUnits(metrics.units)}</strong><small>Unidades</small></div>
         <div><span>Racha actual</span><strong>${currentStreak}</strong><small>Picks ganadores</small></div>
       </div>
       <div class="performance-chart">
+        <div class="performance-chart-title">Rendimiento (últimos 30 días)</div>
         ${
           points.length
             ? `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.join(" ")}"></polyline></svg>`
             : `<div class="empty-chart">Sin historial cerrado suficiente</div>`
         }
+      </div>
+      <div class="league-summary">
+        ${leagueSummary.length
+          ? leagueSummary.map((item) => `<div><span aria-hidden="true">&#9917;</span><strong>${item.count}</strong><small>${escapeHtml(item.label)}</small></div>`).join("")
+          : `<div class="league-summary-empty">Sin ligas activas</div>`}
       </div>`;
   }
 
